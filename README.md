@@ -76,7 +76,7 @@ This project is designed for learning: each phase introduces new technical conce
 
 - Python 3.12+
 - Poetry 2+
-- Node.js 18+
+- Node.js 22+ (use nvm to manage versions)
 - Ollama (`brew install ollama`)
 
 ### Install a local model
@@ -107,7 +107,7 @@ npm run dev
 ## Project Status
 
 - [x] Project planning and architecture design
-- [ ] Phase 1 — Simple Chatbot
+- [x] Phase 1 — Simple Chatbot
 - [ ] Phase 2 — CV Builder Agent
 - [ ] Phase 3 — Job Posting Analysis (RAG)
 - [ ] Phase 4 — Cover Letter & Benchmark
