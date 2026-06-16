@@ -1,6 +1,6 @@
 from typing import TypedDict, List
 from langgraph.graph import StateGraph, START, END
-frim litellm import completion
+from litellm import completion
 
 class State(TypedDict):
     messages: List[dict]
@@ -23,5 +23,3 @@ builder.add_edge(START, "chat")
 builder.add_edge("chat", END)
 
 graph = builder.compile()
-
-
