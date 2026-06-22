@@ -37,6 +37,12 @@ This project is designed for learning: each phase introduces new technical conce
 - Build a minimal LangGraph graph (single node) to handle chat
 - Create a functional chat UI focused on job hunting topics
 
+The chat interface shows a loading state while the agent processes the request, then renders the final response as formatted markdown.
+
+| Processing | Final response |
+|---|---|
+| ![Chatbot processing the request](./documentation/img/chatbot-thinking.png) | ![Chatbot final response](./documentation/img/chatbot-response.png) |
+
 ### Phase 2 — CV Builder Agent (memory & state)
 > Skills: multi-turn conversation, structured outputs, conversation memory, SQLite, HuggingFace models
 
