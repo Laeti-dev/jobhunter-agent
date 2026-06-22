@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import ReactMarkdown from 'react-markdown'
 
 function App() {
   const [messages, setMessages] = useState([]);
@@ -60,8 +61,12 @@ function App() {
           )}
           {messages.map((message, index) => (
             <div key={index} className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}>
-              <div className={`max-w-[75%] px-4 py-2 rounded-2xl text-sm ${message.role === "user" ? "bg-blue-500 text-white" : "bg-gray-100 text-gray-800"}`}>
-                {message.content}
+              <div className={`max-w-[75%] px-4 py-2 rounded-2xl text-sm ${message.role === "user" ? "bg-blue-500 text-white" : "bg-gray-100 text-gray-800 prose prose-sm"}`}>
+                {message.role === "assistant" ? (
+                  <ReactMarkdown>{message.content}</ReactMarkdown>
+                ) : (
+                  message.content
+                )}
               </div>
             </div>
           ))}

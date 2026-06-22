@@ -104,6 +104,33 @@ npm run dev
 
 ---
 
+## Running Locally
+
+Once everything above is installed, starting the app requires **3 terminals** running at the same time.
+
+**Terminal 1 — Ollama (LLM server)**
+```bash
+ollama serve
+```
+
+**Terminal 2 — Backend (FastAPI)**
+```bash
+cd backend
+poetry run uvicorn main:app --reload
+```
+Runs on [http://localhost:8000](http://localhost:8000). Check it's alive: `curl http://localhost:8000/health`.
+
+**Terminal 3 — Frontend (React)**
+```bash
+cd frontend
+npm run dev
+```
+Runs on [http://localhost:5173](http://localhost:5173) — open this URL in your browser to use the chatbot.
+
+> Start them in this order (Ollama → backend → frontend) so each service finds its dependency already running.
+
+---
+
 ## Project Status
 
 - [x] Project planning and architecture design
