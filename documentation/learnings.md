@@ -173,6 +173,107 @@ completion(model="claude-sonnet-4-6", messages=[...])
 
 ---
 
+---
+
+## Phase 2 (WIP) — CV Builder Agent
+
+### Conditional edges — letting the graph decide where to go
+
+Unlike Phase 1's straight line (`START → chat → END`), a conditional edge lets the graph **choose the next node dynamically** based on the state:
+
+```python
+def route_to_generate_cv(state: CVState) -> str:
+    """Decide whether to generate the CV now or wait for the next user message."""
+    last_message = state["messages"][-1]["content"]
+    return "generate_cv" if "[CV_READY]" in last_message else END
+
+builder.add_conditional_edges("agent", route_to_generate_cv)
+```
+
+- The routing function returns either a **node name** (string) or `END`
+- If it returned something else (e.g. a boolean), `add_conditional_edges` needs a third argument: a `path_map` dict translating each possible return value to a node name. Returning the node name directly avoids that extra layer.
+
+### Letting the LLM self-determine completion
+
+Instead of manually tracking "which CV section is filled" in code, the agent's system prompt asks the LLM to add a marker (`[CV_READY]`) when it judges it has enough information. This is simpler to build, at the cost of giving up fine-grained control — a common trade-off in agent design.
+
+### Structured output ≠ truthful output
+
+`response_format=CVProfile` (a Pydantic model) **guarantees the JSON shape** — every field will be present and correctly typed. It does **not** guarantee the LLM only reports what the user actually said. In testing, Llama 3.2 invented soft skills ("Leadership", "Team Management") that were never mentioned, and confused fields (tech skills landed in `spoken_languages`). These are two separate problems:
+- **Format correctness** → solved by Pydantic / `response_format`
+- **Factual correctness** → depends entirely on prompt quality and model capability
+
+### Human-in-the-loop to turn hallucination into a feature
+
+Rather than only suppressing the LLM's tendency to infer things (e.g. soft skills from experience), the system prompt now tells it to **propose** the inference as a question and only keep it if the user confirms it explicitly:
+
+```
+Après avoir recueilli une expérience professionnelle, tu peux déduire des soft
+skills probables... propose-les explicitement... et ne les retiens QUE si
+l'utilisateur les confirme ou les corrige.
+```
+
+This is the human-in-the-loop pattern: the model's inference becomes a suggestion the user validates, not an unchecked assertion.
+
+### Small open-source models hit real limits
+
+Even after tightening the prompt, Llama 3.2 (likely the 3B variant) still hallucinated a refused soft skill and misplaced fields. This isn't a code bug — it's a capability ceiling of small models on nuanced instruction-following ("don't include what the user explicitly declined"). Prompt engineering can only compensate so much; sometimes the fix is a bigger/better model for that specific task.
+
+### Avoiding circular imports across files
+
+Splitting node functions (`nodes/generate_cv_node.py`) from graph wiring (`graphs/cv_graph.py`) created a circular import: the node needed `CVState` from the graph file, and the graph file needed the node function. Fix: move shared types (`BaseState`, `CVState`) into a dependency-free module (`graphs/state.py`) that both other files import from — no file needs to import from the other.
+
+```
+graphs/state.py            (depends on nothing)
+        ↑                          ↑
+nodes/generate_cv_node.py   graphs/cv_graph.py
+```
+
+### Testing a node in isolation
+
+Instead of testing through curl with a growing conversation history, a node can be called directly with a hand-crafted fake state — much faster for checking one specific behavior (e.g. does `response_format` actually return valid JSON with Ollama):
+
+```python
+from nodes.generate_cv_node import generate_cv_node
+fake_state = {"messages": [...], "cv_data": None}
+result = generate_cv_node(fake_state)
+print(result["cv_data"])
+```
+
+### TypedDict does not support default values
+
+```python
+class CVState(BaseState):
+    cv_data: str | None = None  # raises TypeError at class definition time
+```
+
+Unlike Pydantic's `BaseModel`, `TypedDict` fields cannot have default values — only type annotations (`cv_data: str | None`). Defaults must be set when constructing the initial state dict, not in the type definition.
+
+### Benchmarking models with Weave (W&B)
+
+Because LiteLLM makes the model just a string parameter, swapping models for a benchmark is trivial — `generate_cv_node` now accepts a `model` argument instead of hardcoding `"ollama/llama3.2"`.
+
+**Weave** structures a benchmark around three pieces:
+- a **dataset**: test cases (conversation + ground-truth expectations)
+- **scorers**: functions that check the output against that ground truth (`@weave.op()` decorated)
+- an **Evaluation**: runs every model against the dataset through the scorers, logged to a web dashboard
+
+```python
+@weave.op()
+def no_forbidden_soft_skills(output: str, forbidden_soft_skills: list[str]) -> dict:
+    cv_data = json.loads(output)
+    soft_skills = [s.lower() for s in (cv_data.get("soft_skills") or [])]
+    found = [f for f in forbidden_soft_skills if f.lower() in soft_skills]
+    return {"passed": len(found) == 0, "hallucinated_skills": found}
+
+evaluation = weave.Evaluation(dataset=dataset, scorers=[no_forbidden_soft_skills, ...])
+await evaluation.evaluate(model_function)
+```
+
+- Weave matches dataset dict keys to the scorer's and model function's parameter names automatically
+- `weave.init("project-name")` + `WANDB_API_KEY` in `.env` (loaded via `load_dotenv()`) connects the run to a free W&B dashboard
+- Environment variable names read by SDKs are case-sensitive by convention — `WANDB_API_KEY`, not `wandb_api_key`
+
 ### Tooling lessons
 
 - Poetry and Homebrew can install multiple Python versions — always set the correct one with `poetry env use /path/to/python3.12`

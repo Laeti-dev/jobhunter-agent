@@ -31,6 +31,7 @@ class CVProfile(BaseModel):
     github: str
     website: Optional[str] = None
     summary: str
+    target_role: str
     spoken_languages: List[str]
     output_language: str = Field(default="fr")
     experiences: List[Experience]

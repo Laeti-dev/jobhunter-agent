@@ -1,13 +1,6 @@
-from typing import TypedDict, List
 from langgraph.graph import StateGraph, START, END
 from litellm import completion
-
-class State(TypedDict):
-    messages: List[dict]
-    profile: dict
-    current_section: str
-    is_complete: bool
-    output_language: str
+from graphs.state import BaseState as State
 
 def chat_node(state: State) -> State:
     """Call the LLM with the current conversation history."""

@@ -23,6 +23,7 @@ This project is designed for learning: each phase introduces new technical conce
 | Embeddings | sentence-transformers (HuggingFace) | Semantic search for RAG |
 | Vector Store | ChromaDB | Store and retrieve embeddings |
 | Database | SQLite | Persist CV data and chat history |
+| Model Evaluation | Weave (W&B) | Benchmark LLM outputs against ground-truth criteria |
 | Containerisation | Docker | Packaging (added in Phase 3–4) |
 
 ---
@@ -47,9 +48,10 @@ The chat interface shows a loading state while the agent processes the request, 
 > Skills: multi-turn conversation, structured outputs, conversation memory, SQLite, HuggingFace models
 
 - The agent asks targeted questions to collect the user's career history
-- LangGraph manages conversation state across multiple turns
-- Structured output (JSON) stores the CV data in SQLite
-- Introduce open-source HuggingFace models via LiteLLM
+- LangGraph manages conversation state across multiple turns, including conditional routing (`route_to_generate_cv`) to decide when enough information has been collected
+- Structured output (Pydantic `CVProfile`) constrains the LLM's final answer into valid JSON, which is then stored in SQLite
+- A human-in-the-loop pattern lets the agent propose inferred soft skills, only keeping them if the user confirms
+- Benchmark of open-source models (Llama 3.2 vs Qwen 2.5) on CV extraction accuracy using **Weave (W&B)**, comparing hallucination rate and field correctness across models
 
 ### Phase 3 — Job Posting Analysis (RAG)
 > Skills: embeddings, semantic search, ChromaDB, RAG pipeline, Docker
