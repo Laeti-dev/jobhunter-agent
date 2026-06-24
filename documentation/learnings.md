@@ -219,6 +219,17 @@ This is the human-in-the-loop pattern: the model's inference becomes a suggestio
 
 Even after tightening the prompt, Llama 3.2 (likely the 3B variant) still hallucinated a refused soft skill and misplaced fields. This isn't a code bug — it's a capability ceiling of small models on nuanced instruction-following ("don't include what the user explicitly declined"). Prompt engineering can only compensate so much; sometimes the fix is a bigger/better model for that specific task.
 
+### Long conversation history breaks rule-following, even with explicit rules
+
+After adding a strict rule to `SYSTEM_PROMPT` ("only emit `[CV_READY]` once all 6 sections have been covered, then ask a final open question"), the agent still cut the conversation short after the experience section and generated an incomplete CV. This is a different failure mode from the earlier soft-skills hallucination:
+
+- **Soft skills hallucination** = the model invents *content* not present in the conversation
+- **This case** = the model loses track of its *own instructions* as the conversation grows
+
+Small/medium open-source models (3B–7B range) have a limited effective context window in practice — even when the full system prompt and history technically fit, the model's ability to *consistently apply every rule* degrades as the conversation gets longer (a known phenomenon often called "lost in the middle"). Stacking more explicit rules into the system prompt has diminishing returns past a certain conversation length: the model can satisfy the most recent/salient instructions while quietly dropping earlier ones.
+
+**Practical takeaway**: for a learning project, this is a real and expected limitation to hit, document, and move past — not a bug to keep chasing with more prompt engineering. Production systems facing this would typically use a bigger model, summarize/compress history, or track section completion in code (deterministically) instead of trusting the LLM to self-track it over a long exchange.
+
 ### Avoiding circular imports across files
 
 Splitting node functions (`nodes/generate_cv_node.py`) from graph wiring (`graphs/cv_graph.py`) created a circular import: the node needed `CVState` from the graph file, and the graph file needed the node function. Fix: move shared types (`BaseState`, `CVState`) into a dependency-free module (`graphs/state.py`) that both other files import from — no file needs to import from the other.
