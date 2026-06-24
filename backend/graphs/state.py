@@ -8,3 +8,4 @@ class BaseState(TypedDict):
 
 class CVState(BaseState):
     cv_data: str | None
+    cv_id: int | None

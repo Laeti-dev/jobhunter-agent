@@ -274,6 +274,27 @@ await evaluation.evaluate(model_function)
 - `weave.init("project-name")` + `WANDB_API_KEY` in `.env` (loaded via `load_dotenv()`) connects the run to a free W&B dashboard
 - Environment variable names read by SDKs are case-sensitive by convention — `WANDB_API_KEY`, not `wandb_api_key`
 
+### End-to-end pipeline test (full graph, real conversation)
+
+Running the whole graph (`agent → generate_cv → save_to_db`) with a complete fake conversation confirmed the pipeline works mechanically: the agent emitted `[CV_READY]`, `generate_cv_node` produced valid JSON, and `save_to_db_node` wrote a row to SQLite (`cv_id` returned, incrementing on each run). Swapping the extraction model from Llama 3.2 to Qwen 2.5:7b visibly improved output quality (no phantom experiences, correct field placement).
+
+### Prompt engineering has a ceiling — even with explicit rules
+
+After hardening `generate_cv_node`'s system prompt with an explicit rule ("only include a soft skill if the user confirmed it, otherwise return an empty list"), re-running the **same** conversation through the **same** model twice produced two different sets of hallucinated soft skills (`["Leadership", "Team Management", ...]` once, `["gouvernance", "gestion", "formation"]` another time) — neither matching what was actually confirmed. Two separate causes:
+- **Non-determinism**: without a low `temperature`, the same prompt can yield different outputs across runs
+- **Limited instruction-following**: explicit negative constraints ("don't add anything beyond X") are harder for models to respect reliably than positive ones ("extract X")
+
+This is a case where prompt engineering alone has diminishing returns — a fully robust fix would require deterministic post-processing (e.g. verifying each soft skill appears verbatim in the conversation) rather than trusting the LLM's judgment at generation time. Documented here as a known limitation to revisit during Phase 4's evaluation work, rather than a bug to chase indefinitely now.
+
+### `temperature` — controlling randomness
+
+```python
+completion(model=model, messages=messages, response_format=CVProfile, temperature=0.1)
+```
+
+- `temperature` ranges roughly 0–2: `0` ≈ deterministic (always the most likely token), higher values ≈ more varied/creative
+- For factual extraction tasks (like filling a structured CV), a low value (e.g. `0.1`) trades creativity for consistency — the opposite of what you'd want for, say, creative writing
+
 ### Tooling lessons
 
 - Poetry and Homebrew can install multiple Python versions — always set the correct one with `poetry env use /path/to/python3.12`

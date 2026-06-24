@@ -44,7 +44,7 @@ The chat interface shows a loading state while the agent processes the request, 
 |---|---|
 | ![Chatbot processing the request](./documentation/img/chatbot-thinking.png) | ![Chatbot final response](./documentation/img/chatbot-response.png) |
 
-### Phase 2 — CV Builder Agent (memory & state)
+### Phase 2 — CV Builder Agent (memory & state) — in progress
 > Skills: multi-turn conversation, structured outputs, conversation memory, SQLite, HuggingFace models
 
 - The agent asks targeted questions to collect the user's career history
@@ -52,6 +52,8 @@ The chat interface shows a loading state while the agent processes the request, 
 - Structured output (Pydantic `CVProfile`) constrains the LLM's final answer into valid JSON, which is then stored in SQLite
 - A human-in-the-loop pattern lets the agent propose inferred soft skills, only keeping them if the user confirms
 - Benchmark of open-source models (Llama 3.2 vs Qwen 2.5) on CV extraction accuracy using **Weave (W&B)**, comparing hallucination rate and field correctness across models
+- End-to-end pipeline validated: conversation → `[CV_READY]` → structured extraction (Qwen 2.5) → SQLite persistence
+- Remaining: endpoint to retrieve a saved CV, and a more robust (deterministic) guard against residual hallucination in inferred soft skills
 
 ### Phase 3 — Job Posting Analysis (RAG)
 > Skills: embeddings, semantic search, ChromaDB, RAG pipeline, Docker

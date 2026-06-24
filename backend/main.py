@@ -3,8 +3,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from graphs.chat_graph import graph
 from graphs.cv_graph import cv_graph
+from database import init_db
 
 app = FastAPI()
+init_db()
 
 app.add_middleware(
     CORSMiddleware, # Cross-Origin Resource Sharing middleware to allow requests from the frontend

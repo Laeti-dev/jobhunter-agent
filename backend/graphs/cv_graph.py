@@ -2,6 +2,7 @@ from langgraph.graph import StateGraph, START, END
 from litellm import completion
 from graphs.state import CVState
 from nodes.generate_cv_node import generate_cv_node
+from nodes.save_to_db_node import save_to_db_node
 
 
 SYSTEM_PROMPT = """Tu es un assistant spécialisé dans la construction de CV.
@@ -53,8 +54,11 @@ def route_to_generate_cv(state: CVState) -> str:
 builder = StateGraph(CVState)
 builder.add_node("agent", agent_node)
 builder.add_node("generate_cv", generate_cv_node)
+builder.add_node("save_to_db", save_to_db_node)
+
 builder.add_edge(START, "agent")
 builder.add_conditional_edges("agent", route_to_generate_cv)
-builder.add_edge("generate_cv", END)
+builder.add_edge("generate_cv", "save_to_db")
+builder.add_edge("save_to_db", END)
 
 cv_graph = builder.compile()
