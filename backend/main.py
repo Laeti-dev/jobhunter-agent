@@ -2,11 +2,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from graphs.chat_graph import graph
-from graphs.cv_graph import cv_graph
 from database import init_db
+from routers.cv import router as cv_router
 
 app = FastAPI()
 init_db()
+app.include_router(cv_router)
 
 app.add_middleware(
     CORSMiddleware, # Cross-Origin Resource Sharing middleware to allow requests from the frontend
@@ -31,9 +32,4 @@ async def chat(request: ChatRequest):
     result = graph.invoke({"messages": messages})
     return {"response": result["messages"][-1]["content"]}
 
-@app.post("/cv/chat")
-async def cv_chat(request: ChatRequest):
-    """Receive a user message and return a response from the LLM."""
-    messages = request.history + [{"role": "user", "content": request.message}]
-    result = cv_graph.invoke({"messages": messages})
-    return {"response": result["messages"][-1]["content"]}
+
