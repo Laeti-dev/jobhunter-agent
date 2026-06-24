@@ -44,7 +44,7 @@ The chat interface shows a loading state while the agent processes the request, 
 |---|---|
 | ![Chatbot processing the request](./documentation/img/chatbot-thinking.png) | ![Chatbot final response](./documentation/img/chatbot-response.png) |
 
-### Phase 2 — CV Builder Agent (memory & state) — in progress
+### Phase 2 — CV Builder Agent (memory & state)
 > Skills: multi-turn conversation, structured outputs, conversation memory, SQLite, HuggingFace models
 
 - The agent asks targeted questions to collect the user's career history
@@ -52,8 +52,8 @@ The chat interface shows a loading state while the agent processes the request, 
 - Structured output (Pydantic `CVProfile`) constrains the LLM's final answer into valid JSON, which is then stored in SQLite
 - A human-in-the-loop pattern lets the agent propose inferred soft skills, only keeping them if the user confirms
 - Benchmark of open-source models (Llama 3.2 vs Qwen 2.5) on CV extraction accuracy using **Weave (W&B)**, comparing hallucination rate and field correctness across models
-- End-to-end pipeline validated: conversation → `[CV_READY]` → structured extraction (Qwen 2.5) → SQLite persistence
-- Remaining: endpoint to retrieve a saved CV, and a more robust (deterministic) guard against residual hallucination in inferred soft skills
+- End-to-end pipeline working: conversation → `[CV_READY]` → structured extraction (Qwen 2.5) → SQLite persistence → CV preview in the React UI
+- **Known limitation** (kept as-is, documented in `documentation/learnings.md`): on long conversations, the small/medium local models occasionally lose track of the system prompt's rules (e.g. skip a section before declaring completion) or residually hallucinate an inferred soft skill — a real capability ceiling of these models rather than a code bug
 
 ### Phase 3 — Job Posting Analysis (RAG)
 > Skills: embeddings, semantic search, ChromaDB, RAG pipeline, Docker
@@ -145,7 +145,7 @@ Runs on [http://localhost:5173](http://localhost:5173) — open this URL in your
 
 - [x] Project planning and architecture design
 - [x] Phase 1 — Simple Chatbot
-- [ ] Phase 2 — CV Builder Agent
+- [x] Phase 2 — CV Builder Agent
 - [ ] Phase 3 — Job Posting Analysis (RAG)
 - [ ] Phase 4 — Cover Letter & Benchmark
 - [ ] Phase 5 — Autonomous Web Agent & Interview Simulation
