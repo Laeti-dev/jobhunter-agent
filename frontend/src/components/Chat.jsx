@@ -1,10 +1,12 @@
 import { useState, useRef, useEffect } from 'react'
 import ReactMarkdown from 'react-markdown'
 
-function Chat({ endpoint, placeholder = "Posez votre question...", onCvReady }) {
+function Chat({ endpoint, placeholder = "Posez votre question...", onCvReady, stateful = false }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [threadId, setThreadId] = useState(null);
+  const [currentSection, setCurrentSection] = useState(null);
   const bottomRef = useRef(null);
 
   useEffect(() => {
@@ -20,13 +22,17 @@ function Chat({ endpoint, placeholder = "Posez votre question...", onCvReady }) 
     setInput('');
     setIsLoading(true);
 
+    const body = stateful
+      ? { message: input, thread_id: threadId }
+      : { message: input, history: messages };
+
     try {
       const response = await fetch(`http://localhost:8000${endpoint}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ message: input, history: messages }),
+        body: JSON.stringify(body),
       });
 
       if (!response.ok) {
@@ -36,6 +42,10 @@ function Chat({ endpoint, placeholder = "Posez votre question...", onCvReady }) 
       const data = await response.json();
       const assistantMessage = { role: 'assistant', content: data.response };
       setMessages([...updatedMessages, assistantMessage]);
+      if (stateful && data.thread_id) {
+        setThreadId(data.thread_id);
+        setCurrentSection(data.current_section ?? null);
+      }
       if (data.cv_ready) {
         onCvReady?.();
       }
@@ -82,6 +92,12 @@ function Chat({ endpoint, placeholder = "Posez votre question...", onCvReady }) 
         )}
         <div ref={bottomRef} />
       </div>
+
+      {currentSection && (
+        <div className="px-4 py-1 border-t text-xs text-gray-400">
+          Section en cours : <span className="font-medium text-blue-500">{currentSection}</span>
+        </div>
+      )}
 
       <div className="p-4 border-t flex gap-2 items-end">
         <textarea

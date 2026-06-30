@@ -7,4 +7,4 @@ def save_to_db_node(state: CVState) -> CVState:
     cv_data = state["cv_data"]
     cv_profile = CVProfile.model_validate_json(cv_data)
     cv_id = save_cv(cv_profile)
-    return {"messages": state["messages"], "cv_id": cv_id}
+    return {"cv_id": cv_id}

@@ -6,6 +6,24 @@ class BaseState(TypedDict):
     messages: List[dict]
 
 
-class CVState(BaseState):
+class CVState(TypedDict):
+    section_index: int
+    context_messages: List[dict]
+    current_items: List[dict]
+    collected_data: dict
+    awaiting_continue: bool
+    wants_more_items: bool
     cv_data: str | None
     cv_id: int | None
+
+
+DEFAULT_CV_STATE: CVState = {
+    "section_index": 0,
+    "context_messages": [],
+    "current_items": [],
+    "collected_data": {},
+    "awaiting_continue": False,
+    "wants_more_items": False,
+    "cv_data": None,
+    "cv_id": None,
+}

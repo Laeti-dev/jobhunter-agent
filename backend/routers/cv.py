@@ -1,26 +1,44 @@
+import uuid
 from fastapi import APIRouter
 from pydantic import BaseModel
 from graphs.cv_graph import cv_graph
+from graphs.state import DEFAULT_CV_STATE
 from database import get_latest_cv
+from sections import SECTIONS
 
 router = APIRouter(prefix="/cv")
 
 
-class ChatRequest(BaseModel):
+class CVChatRequest(BaseModel):
     message: str
-    history: list[dict] = []
+    thread_id: str | None = None
 
 
 @router.post("/chat")
-async def cv_chat(request: ChatRequest):
-    """Receive a user message and return the CV builder agent's response."""
-    messages = request.history + [{"role": "user", "content": request.message}]
-    result = cv_graph.invoke({"messages": messages})
-    last_message = result["messages"][-1]["content"]
-    cv_ready = "[CV_READY]" in last_message
+async def cv_chat(request: CVChatRequest):
+    """Receive a user message and advance the CV builder agent's session."""
+    thread_id = request.thread_id or str(uuid.uuid4())
+    config = {"configurable": {"thread_id": thread_id}}
+
+    snapshot = cv_graph.get_state(config)
+    current_state = snapshot.values or DEFAULT_CV_STATE
+
+    updated_context = current_state["context_messages"] + [{"role": "user", "content": request.message}]
+    input_state = {**current_state, "context_messages": updated_context}
+
+    result = cv_graph.invoke(input_state, config=config)
+
+    raw_message = result["context_messages"][-1]["content"] if result["context_messages"] else ""
+    last_message = raw_message.replace("[SECTION_DONE]", "").replace("[ITEM_DONE]", "").strip()
+    cv_ready = result.get("cv_data") is not None
+    section_index = result.get("section_index", 0)
+    current_section = SECTIONS[section_index]["label"] if section_index < len(SECTIONS) else "Terminé"
+
     return {
-        "response": last_message.replace("[CV_READY]", "").strip(),
+        "response": last_message,
         "cv_ready": cv_ready,
+        "thread_id": thread_id,
+        "current_section": current_section,
     }
 
 

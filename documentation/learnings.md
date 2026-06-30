@@ -219,16 +219,149 @@ This is the human-in-the-loop pattern: the model's inference becomes a suggestio
 
 Even after tightening the prompt, Llama 3.2 (likely the 3B variant) still hallucinated a refused soft skill and misplaced fields. This isn't a code bug — it's a capability ceiling of small models on nuanced instruction-following ("don't include what the user explicitly declined"). Prompt engineering can only compensate so much; sometimes the fix is a bigger/better model for that specific task.
 
-### Long conversation history breaks rule-following, even with explicit rules
+### Long conversation history breaks rule-following — and the architectural fix
 
-After adding a strict rule to `SYSTEM_PROMPT` ("only emit `[CV_READY]` once all 6 sections have been covered, then ask a final open question"), the agent still cut the conversation short after the experience section and generated an incomplete CV. This is a different failure mode from the earlier soft-skills hallucination:
+After adding explicit rules to `SYSTEM_PROMPT` ("only emit `[CV_READY]` once all 6 sections have been covered"), the agent still cut the conversation short after the experience section. This is the "lost in the middle" problem: small/medium open-source models lose track of early instructions as the conversation grows — not a bug in the code, but a capability ceiling of the model.
 
-- **Soft skills hallucination** = the model invents *content* not present in the conversation
-- **This case** = the model loses track of its *own instructions* as the conversation grows
+**The real fix: section-based context isolation**
 
-Small/medium open-source models (3B–7B range) have a limited effective context window in practice — even when the full system prompt and history technically fit, the model's ability to *consistently apply every rule* degrades as the conversation gets longer (a known phenomenon often called "lost in the middle"). Stacking more explicit rules into the system prompt has diminishing returns past a certain conversation length: the model can satisfy the most recent/salient instructions while quietly dropping earlier ones.
+Instead of one continuous context that grows forever, the conversation is split into short-lived contexts — one per section (or even one per item in list-type sections). The graph manages section transitions in code (deterministically), and the LLM only ever sees a short, focused prompt:
 
-**Practical takeaway**: for a learning project, this is a real and expected limitation to hit, document, and move past — not a bug to keep chasing with more prompt engineering. Production systems facing this would typically use a bigger model, summarize/compress history, or track section completion in code (deterministically) instead of trusting the LLM to self-track it over a long exchange.
+```
+Phase 2 v1 (wrong): one long chat history → LLM tries to track everything → fails
+Phase 2 v2 (fixed): short context per section/item → LLM has one focused task → succeeds
+```
+
+**New graph structure (loop with section-level state machine):**
+
+```
+START → route_entry
+  if flat section (identity, skills, languages):
+    ask_in_section → [SECTION_DONE?] → extract_section → advance → next section
+  if list section (experiences, education, projects):
+    ask_in_item → [ITEM_DONE?] → extract_item → ask_continue → [user answers yes/no]
+      → yes: reset item context, ask_in_item again (new item)
+      → no:  merge items into collected_data, advance to next section
+```
+
+**New state fields (in `CVState`):**
+
+```python
+class CVState(TypedDict):
+    section_index: int           # which section we're on (0–5)
+    context_messages: List[dict] # short context, reset for each section/item
+    current_items: List[dict]    # items accumulated for current list section
+    collected_data: dict         # data already extracted (never re-sent to the LLM)
+    awaiting_continue: bool      # are we waiting for a yes/no answer?
+    wants_more_items: bool       # used to route after continue decision
+    cv_data: str | None
+    cv_id: int | None
+```
+
+### LangGraph Checkpointer — stateful agents without client-side state
+
+With per-section context, the state can no longer be carried round-trip via a `history` field — it's too complex. Instead, LangGraph's built-in **checkpointer** system persists the full graph state between HTTP calls, identified by a `thread_id` (generated on the first message, returned to the client, echoed back on each subsequent call):
+
+```python
+import sqlite3
+from langgraph.checkpoint.sqlite import SqliteSaver
+
+_conn = sqlite3.connect("cv_sessions.db", check_same_thread=False)
+checkpointer = SqliteSaver(_conn)
+cv_graph = builder.compile(checkpointer=checkpointer)
+```
+
+On the API side, state is loaded, the new user message is appended, and the graph is invoked:
+
+```python
+config = {"configurable": {"thread_id": thread_id}}
+snapshot = cv_graph.get_state(config)
+current_state = snapshot.values or DEFAULT_CV_STATE
+
+updated_context = current_state["context_messages"] + [{"role": "user", "content": request.message}]
+result = cv_graph.invoke({**current_state, "context_messages": updated_context}, config=config)
+```
+
+- `SqliteSaver` requires a direct `sqlite3` connection — `SqliteSaver.from_conn_string()` returns a context manager (not usable directly) in version 3.x
+- `check_same_thread=False` is required because FastAPI runs in async threads
+
+### Per-section configuration in `sections.py`
+
+Each section is described as a dict with its instructions, model, and minimum expected exchanges:
+
+```python
+SECTIONS = [
+    {
+        "key": "identity",
+        "label": "Identité",
+        "is_list": False,
+        "model": Identity,
+        "min_user_messages": 5,   # guard: 5 fields → at least 5 user turns required
+        "instructions": "Collecte ces 5 informations : nom, email, téléphone, ville, métier recherché...",
+    },
+    {
+        "key": "experiences",
+        "label": "expérience professionnelle",
+        "is_list": True,
+        "item_model": Experience,
+        "min_user_messages": 4,   # per item: needs poste, entreprise, dates, missions
+        "instructions": "Pose des questions sur CETTE expérience (une seule à la fois)...",
+    },
+    ...
+]
+```
+
+### Deterministic guards against premature marker detection
+
+The routing functions check two conditions before allowing a section/item to complete — both must be true:
+
+```python
+def route_after_section_question(state: CVState) -> str:
+    section = SECTIONS[state["section_index"]]
+    last_message = state["context_messages"][-1]["content"]
+    min_messages = section.get("min_user_messages", 2)
+    user_count = sum(1 for m in state["context_messages"] if m["role"] == "user")
+    if "[SECTION_DONE]" in last_message and user_count >= min_messages:
+        return "extract_section"
+    return END
+```
+
+1. The LLM must have emitted the marker (`[SECTION_DONE]` or `[ITEM_DONE]`)
+2. The minimum number of user messages for this section must have been reached
+
+This is deterministic code that the LLM cannot circumvent by "deciding early."
+
+### Stop sequences — preventing self-continuation
+
+Even with explicit prompt instructions ("STOP after your question"), small models frequently simulate the user's next reply inline (`### User: [invented answer] ### Assistant: next question`). This is cured by a **stop sequence**: the completion call terminates the moment the model starts generating a user turn marker.
+
+```python
+response = completion(
+    model=model,
+    messages=messages,
+    temperature=0.2,
+    stop=["### User:", "\nUser:", "\nUtilisateur:", "\n### "],
+)
+```
+
+Stop sequences are deterministic and enforced by the inference engine — unlike prompt instructions, the model cannot "ignore" them.
+
+### Deterministic nodes (no LLM call)
+
+Not every node needs a LLM. `ask_continue_node` generates a fixed question ("Voulez-vous ajouter une autre expérience ?") and `handle_continue_answer_node` classifies the user's reply using keyword matching — zero hallucination risk for these control-flow decisions:
+
+```python
+NEGATIVE_KEYWORDS = ["non", "no", "c'est tout", "rien d'autre"]
+AFFIRMATIVE_KEYWORDS = ["oui", "yes", "encore", "ajouter"]
+
+def is_affirmative(text: str) -> bool:
+    text = text.lower()
+    if any(kw in text for kw in NEGATIVE_KEYWORDS):
+        return False
+    return any(kw in text for kw in AFFIRMATIVE_KEYWORDS)
+```
+
+The general principle: **let the LLM do language tasks; let deterministic code do control-flow decisions.**
 
 ### Avoiding circular imports across files
 
@@ -245,10 +378,21 @@ nodes/generate_cv_node.py   graphs/cv_graph.py
 Instead of testing through curl with a growing conversation history, a node can be called directly with a hand-crafted fake state — much faster for checking one specific behavior (e.g. does `response_format` actually return valid JSON with Ollama):
 
 ```python
-from nodes.generate_cv_node import generate_cv_node
-fake_state = {"messages": [...], "cv_data": None}
-result = generate_cv_node(fake_state)
-print(result["cv_data"])
+from nodes.extract_item_node import extract_item_node
+fake_state = {
+    "section_index": 1,  # experiences
+    "context_messages": [
+        {"role": "user", "content": "J'étais cheffe de rang chez Le Bistrot, 2019–2024"},
+    ],
+    "current_items": [],
+    "collected_data": {},
+    "awaiting_continue": False,
+    "wants_more_items": False,
+    "cv_data": None,
+    "cv_id": None,
+}
+result = extract_item_node(fake_state)
+print(result["current_items"])
 ```
 
 ### TypedDict does not support default values

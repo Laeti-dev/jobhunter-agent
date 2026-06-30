@@ -3,8 +3,8 @@ import Chat from './components/Chat'
 import CVPreview from './components/CVPreview'
 
 const TABS = {
-  chat: { label: "Chat", endpoint: "/chat", placeholder: "Posez votre question..." },
-  cv: { label: "CV Builder", endpoint: "/cv/chat", placeholder: "Répondez à l'agent..." },
+  chat: { label: "Chat", endpoint: "/chat", placeholder: "Posez votre question...", stateful: false },
+  cv: { label: "CV Builder", endpoint: "/cv/chat", placeholder: "Répondez à l'agent...", stateful: true },
 };
 
 function App() {
@@ -37,6 +37,7 @@ function App() {
         key={tab.endpoint}
         endpoint={tab.endpoint}
         placeholder={tab.placeholder}
+        stateful={tab.stateful}
         onCvReady={() => setShowCvPreview(true)}
       />
 
