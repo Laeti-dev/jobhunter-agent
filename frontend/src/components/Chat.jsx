@@ -40,8 +40,9 @@ function Chat({ endpoint, placeholder = "Posez votre question...", onCvReady, st
       }
 
       const data = await response.json();
-      const assistantMessage = { role: 'assistant', content: data.response };
-      setMessages([...updatedMessages, assistantMessage]);
+      if (data.response) {
+        setMessages([...updatedMessages, { role: 'assistant', content: data.response }]);
+      }
       if (stateful && data.thread_id) {
         setThreadId(data.thread_id);
         setCurrentSection(data.current_section ?? null);
@@ -93,9 +94,14 @@ function Chat({ endpoint, placeholder = "Posez votre question...", onCvReady, st
         <div ref={bottomRef} />
       </div>
 
-      {currentSection && (
-        <div className="px-4 py-1 border-t text-xs text-gray-400">
-          Section en cours : <span className="font-medium text-blue-500">{currentSection}</span>
+      {(currentSection || threadId) && (
+        <div className="px-4 py-1 border-t text-xs text-gray-400 flex justify-between">
+          {currentSection && (
+            <span>Section : <span className="font-medium text-blue-500">{currentSection}</span></span>
+          )}
+          {threadId && (
+            <span className="font-mono text-gray-300">{threadId}</span>
+          )}
         </div>
       )}
 

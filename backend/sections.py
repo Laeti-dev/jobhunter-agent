@@ -79,6 +79,7 @@ SECTIONS = [
         "label": "projet",
         "article": "un",
         "is_list": True,
+        "optional": True,
         "min_user_messages": 2,
         "item_model": Project,
         "instructions": (

@@ -11,12 +11,41 @@ function CVPreview({ onClose }) {
       .finally(() => setIsLoading(false));
   }, []);
 
+  function downloadJson() {
+    const blob = new Blob([JSON.stringify(cv, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `cv-${cv.name?.replace(/\s+/g, '-').toLowerCase() ?? 'export'}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50">
-      <div className="bg-white rounded-2xl shadow-lg max-w-2xl w-full max-h-[80vh] overflow-y-auto p-6">
-        <div className="flex justify-between items-center mb-4">
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50 print:bg-white print:block print:p-0">
+      <div className="bg-white rounded-2xl shadow-lg max-w-2xl w-full max-h-[80vh] overflow-y-auto p-6 print:shadow-none print:rounded-none print:max-h-none">
+
+        <div className="flex justify-between items-center mb-4 print:hidden">
           <h2 className="text-lg font-bold text-gray-800">Ton CV</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">✕</button>
+          <div className="flex gap-2">
+            {cv && (
+              <>
+                <button
+                  onClick={() => window.print()}
+                  className="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg text-xs font-medium"
+                >
+                  Imprimer / PDF
+                </button>
+                <button
+                  onClick={downloadJson}
+                  className="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg text-xs font-medium"
+                >
+                  JSON
+                </button>
+              </>
+            )}
+            <button onClick={onClose} className="text-gray-400 hover:text-gray-600 ml-1">✕</button>
+          </div>
         </div>
 
         {isLoading && <p className="text-gray-400">Chargement...</p>}
@@ -81,6 +110,21 @@ function CVPreview({ onClose }) {
               <div>
                 <h4 className="font-semibold text-gray-900 mb-1">Langues</h4>
                 <p>{cv.spoken_languages.join(', ')}</p>
+              </div>
+            )}
+
+            {cv.projects?.length > 0 && (
+              <div>
+                <h4 className="font-semibold text-gray-900 mb-1">Projets</h4>
+                {cv.projects.map((project, index) => (
+                  <div key={index} className="mb-2">
+                    <p className="font-medium">{project.title}</p>
+                    <p>{project.description}</p>
+                    {project.technologies?.length > 0 && (
+                      <p className="text-gray-500 text-xs">{project.technologies.join(', ')}</p>
+                    )}
+                  </div>
+                ))}
               </div>
             )}
           </div>

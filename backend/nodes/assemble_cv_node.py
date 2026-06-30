@@ -9,14 +9,29 @@ class _Summary(BaseModel):
     summary: str
 
 
+def _strip_markers(value: object) -> object:
+    """Recursively strip internal markers from string values in collected_data."""
+    markers = ["[SECTION_DONE]", "[ITEM_DONE]"]
+    if isinstance(value, str):
+        for marker in markers:
+            value = value.replace(marker, "")
+        return value.strip()
+    if isinstance(value, list):
+        return [_strip_markers(item) for item in value]
+    if isinstance(value, dict):
+        return {k: _strip_markers(v) for k, v in value.items()}
+    return value
+
+
 def assemble_cv_node(state: CVState, model: str = "ollama/qwen2.5:7b") -> CVState:
     """Build the final CVProfile from the structured data collected section by section."""
-    data = state["collected_data"]
+    data = _strip_markers(state["collected_data"])
 
     summary_messages = [
         {"role": "system", "content": (
-            "Rédige un résumé professionnel concis (2 à 3 phrases) pour un CV, à partir "
-            "de ces données structurées. N'invente aucune information absente des données."
+            "Rédige un résumé professionnel concis (2 à 3 phrases) pour un CV, à la "
+            "PREMIÈRE PERSONNE (je, j'ai, je maîtrise...), à partir de ces données "
+            "structurées. N'invente aucune information absente des données."
         )},
         {"role": "user", "content": json.dumps(data, ensure_ascii=False)},
     ]

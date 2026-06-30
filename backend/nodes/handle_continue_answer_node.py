@@ -1,8 +1,9 @@
 from graphs.state import CVState
 from sections import SECTIONS
 
-NEGATIVE_KEYWORDS = ["non", "no", "c'est tout", "rien d'autre", "pas d'autre"]
-AFFIRMATIVE_KEYWORDS = ["oui", "yes", "encore", "ajouter"]
+NEGATIVE_KEYWORDS = ["non", "no", "c'est tout", "rien d'autre", "pas d'autre",
+                     "pas de", "aucun", "aucune", "sans", "rien", "nope"]
+AFFIRMATIVE_KEYWORDS = ["oui", "yes", "encore", "ajouter", "si", "bien sûr", "volontiers"]
 
 
 def is_affirmative(text: str) -> bool:

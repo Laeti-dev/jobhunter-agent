@@ -1,6 +1,4 @@
-import sqlite3
 from langgraph.graph import StateGraph, START, END
-from langgraph.checkpoint.sqlite import SqliteSaver
 
 from graphs.state import CVState
 from sections import SECTIONS
@@ -19,6 +17,8 @@ def route_entry(state: CVState) -> str:
     if state["awaiting_continue"]:
         return "handle_continue_answer"
     section = SECTIONS[state["section_index"]]
+    if section.get("optional") and section["is_list"] and not state["current_items"]:
+        return "ask_continue"
     return "ask_in_item" if section["is_list"] else "ask_in_section"
 
 
@@ -49,6 +49,8 @@ def route_after_section_advance(state: CVState) -> str:
     if state["section_index"] >= len(SECTIONS):
         return "assemble_cv"
     next_section = SECTIONS[state["section_index"]]
+    if next_section.get("optional") and next_section["is_list"]:
+        return "ask_continue"
     return "ask_in_item" if next_section["is_list"] else "ask_in_section"
 
 
@@ -78,6 +80,6 @@ builder.add_conditional_edges("handle_continue_answer", route_after_continue)
 builder.add_edge("assemble_cv", "save_to_db")
 builder.add_edge("save_to_db", END)
 
-_conn = sqlite3.connect("cv_sessions.db", check_same_thread=False)
-checkpointer = SqliteSaver(_conn)
-cv_graph = builder.compile(checkpointer=checkpointer)
+cv_graph = builder.compile()
+
+SESSION_STORE: dict[str, dict] = {}

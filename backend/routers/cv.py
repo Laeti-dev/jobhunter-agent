@@ -1,7 +1,7 @@
 import uuid
 from fastapi import APIRouter
 from pydantic import BaseModel
-from graphs.cv_graph import cv_graph
+from graphs.cv_graph import cv_graph, SESSION_STORE
 from graphs.state import DEFAULT_CV_STATE
 from database import get_latest_cv
 from sections import SECTIONS
@@ -18,15 +18,14 @@ class CVChatRequest(BaseModel):
 async def cv_chat(request: CVChatRequest):
     """Receive a user message and advance the CV builder agent's session."""
     thread_id = request.thread_id or str(uuid.uuid4())
-    config = {"configurable": {"thread_id": thread_id}}
 
-    snapshot = cv_graph.get_state(config)
-    current_state = snapshot.values or DEFAULT_CV_STATE
-
+    current_state = SESSION_STORE.get(thread_id, dict(DEFAULT_CV_STATE))
     updated_context = current_state["context_messages"] + [{"role": "user", "content": request.message}]
     input_state = {**current_state, "context_messages": updated_context}
 
-    result = cv_graph.invoke(input_state, config=config)
+    result = cv_graph.invoke(input_state)
+
+    SESSION_STORE[thread_id] = result
 
     raw_message = result["context_messages"][-1]["content"] if result["context_messages"] else ""
     last_message = raw_message.replace("[SECTION_DONE]", "").replace("[ITEM_DONE]", "").strip()
