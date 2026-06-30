@@ -26,9 +26,11 @@ Pour le champ 'experience', utilise UNIQUEMENT ces valeurs (ou null si inconnu) 
 - "2" : 1 à 3 ans d'expérience
 - "3" : plus de 3 ans d'expérience
 
-Pour le champ 'education_level', utilise UNIQUEMENT ces valeurs (ou null si inconnu) :
-- "NV2" : BAC+3 ou BAC+4 (Licence) ou équivalent
-- "NV1" : BAC+5 (Master, Ingénieur, Grande École) ou équivalent
+Pour le champ 'education_level', utilise UNIQUEMENT ces valeurs, ou null si tu n'es pas
+certain du niveau exact (préférer null plutôt qu'un filtre trop restrictif) :
+- "NV3" : BAC+2 (BTS, DUT)
+- "NV2" : BAC+3 ou BAC+4 (Licence)
+- "NV1" : BAC+5 et plus (Master, Ingénieur, Doctorat)
 
 Pour 'keywords', génère 2 à 4 mots-clés pertinents basés sur le poste visé et les
 compétences techniques principales (ex: "AI Engineer Python LangGraph").

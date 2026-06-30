@@ -1,10 +1,12 @@
 import { useState } from 'react'
 import Chat from './components/Chat'
 import CVPreview from './components/CVPreview'
+import JobSearch from './components/JobSearch'
 
 const TABS = {
   chat: { label: "Chat", endpoint: "/chat", placeholder: "Posez votre question...", stateful: false },
   cv: { label: "CV Builder", endpoint: "/cv/chat", placeholder: "Répondez à l'agent...", stateful: true },
+  jobs: { label: "Offres", endpoint: null, placeholder: null, stateful: false },
 };
 
 function App() {
@@ -33,13 +35,17 @@ function App() {
         </div>
       </div>
 
-      <Chat
-        key={tab.endpoint}
-        endpoint={tab.endpoint}
-        placeholder={tab.placeholder}
-        stateful={tab.stateful}
-        onCvReady={() => setShowCvPreview(true)}
-      />
+      {activeTab === 'jobs' ? (
+        <JobSearch />
+      ) : (
+        <Chat
+          key={tab.endpoint}
+          endpoint={tab.endpoint}
+          placeholder={tab.placeholder}
+          stateful={tab.stateful}
+          onCvReady={() => setShowCvPreview(true)}
+        />
+      )}
 
       {showCvPreview && <CVPreview onClose={() => setShowCvPreview(false)} />}
     </div>

@@ -31,5 +31,3 @@ def build_extraction_prompt(label: str) -> dict:
             "confirmées par l'utilisateur."
         ),
     }
-
-def build_query_prompt(cv_profile: CVProfile) -> str:

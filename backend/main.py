@@ -4,10 +4,12 @@ from pydantic import BaseModel
 from graphs.chat_graph import graph
 from utils.database import init_db
 from routers.cv import router as cv_router
+from routers.job_offers import router as jobs_router
 
 app = FastAPI()
 init_db()
 app.include_router(cv_router)
+app.include_router(jobs_router)
 
 app.add_middleware(
     CORSMiddleware, # Cross-Origin Resource Sharing middleware to allow requests from the frontend
