@@ -20,6 +20,8 @@ This project is designed for learning: each phase introduces new technical conce
 | LLM (local) | Ollama (Llama 3.2, Mistral…) | Local inference on Apple Silicon |
 | LLM (cloud) | HuggingFace Inference API | Cloud backup / benchmarking |
 | Agent Framework | LangGraph | Stateful agent graphs |
+| Job Offers API | France Travail API (OAuth2) | Real job postings data source |
+| HTTP Client | httpx | Async API calls to France Travail |
 | Embeddings | sentence-transformers (HuggingFace) | Semantic search for RAG |
 | Vector Store | ChromaDB | Store and retrieve embeddings |
 | Database | SQLite | Persist CV data and chat history |
@@ -55,14 +57,16 @@ The chat interface shows a loading state while the agent processes the request, 
 - End-to-end pipeline working: conversation → `[CV_READY]` → structured extraction (Qwen 2.5) → SQLite persistence → CV preview in the React UI
 - **Known limitation** (kept as-is, documented in `documentation/learnings.md`): on long conversations, the small/medium local models occasionally lose track of the system prompt's rules (e.g. skip a section before declaring completion) or residually hallucinate an inferred soft skill — a real capability ceiling of these models rather than a code bug
 
-### Phase 3 — Job Posting Analysis (RAG)
-> Skills: embeddings, semantic search, ChromaDB, RAG pipeline, Docker
+### Phase 3 — Job Search & RAG Analysis
+> Skills: OAuth2 API integration, RAG pipeline, embeddings, semantic search, ChromaDB
 
-- User pastes a job posting → agent compares it with the stored CV
-- HuggingFace `sentence-transformers` generate embeddings locally
-- ChromaDB stores and retrieves vectors for semantic comparison
-- Agent highlights gaps and strengths, and suggests CV improvements
-- Containerise the app with Docker
+Rather than pasting a job posting manually, the app connects to the **France Travail API** (Pôle Emploi) to fetch real job offers matching the user's profile.
+
+- A **Query Builder agent** reads the stored `CVProfile` and generates optimal search parameters (keywords, location via `/referentiel/communes`, experience level)
+- User can **validate and adjust** these parameters before launching the search
+- The app authenticates with France Travail via **OAuth2 client credentials** (token cached and auto-refreshed)
+- Job offers are fetched from `/offres/search` and displayed as selectable cards
+- Selecting an offer triggers a **RAG pipeline**: the offer text is embedded with `sentence-transformers`, compared semantically against the stored CV using ChromaDB, and an LLM generates a detailed match analysis (strengths, gaps, suggestions)
 
 ### Phase 4 — Cover Letter & Benchmark (evaluation)
 > Skills: prompt chaining, document generation, model evaluation
@@ -146,6 +150,6 @@ Runs on [http://localhost:5173](http://localhost:5173) — open this URL in your
 - [x] Project planning and architecture design
 - [x] Phase 1 — Simple Chatbot
 - [x] Phase 2 — CV Builder Agent
-- [ ] Phase 3 — Job Posting Analysis (RAG)
+- [ ] Phase 3 — Job Search & RAG Analysis
 - [ ] Phase 4 — Cover Letter & Benchmark
 - [ ] Phase 5 — Autonomous Web Agent & Interview Simulation
