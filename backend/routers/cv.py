@@ -3,7 +3,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 from graphs.cv_graph import cv_graph, SESSION_STORE
 from graphs.state import DEFAULT_CV_STATE
-from database import get_latest_cv
+from utils.database import get_latest_cv
 from sections import SECTIONS
 
 router = APIRouter(prefix="/cv")

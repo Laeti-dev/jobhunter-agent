@@ -101,5 +101,14 @@ class FranceTravailClient:
         data = response.json()
         return data.get("resultats", [])
 
+    def get_education_levels(self) -> list[dict]:
+        """Return all education levels from France Travail's referentiel."""
+        response = httpx.get(
+            f"{API_BASE}/referentiel/niveauxFormations",
+            headers=self._headers(),
+        )
+        response.raise_for_status()
+        return response.json()
+
 
 france_travail = FranceTravailClient()

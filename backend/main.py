@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from graphs.chat_graph import graph
-from database import init_db
+from utils.database import init_db
 from routers.cv import router as cv_router
 
 app = FastAPI()

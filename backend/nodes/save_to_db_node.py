@@ -1,6 +1,6 @@
 from graphs.state import CVState
 from cv_model import CVProfile
-from database import save_cv
+from utils.database import save_cv
 
 def save_to_db_node(state: CVState) -> CVState:
     """Save the CV profile to the database."""
