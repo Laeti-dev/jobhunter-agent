@@ -110,5 +110,14 @@ class FranceTravailClient:
         response.raise_for_status()
         return response.json()
 
+    def get_offer(self, offer_id: str) -> dict:
+        """Return the details of a specific job offer."""
+        response = httpx.get(
+            f"{API_BASE}/offres/{offer_id}",
+            headers=self._headers(),
+        )
+        response.raise_for_status()
+        return response.json()
+
 
 france_travail = FranceTravailClient()

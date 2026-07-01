@@ -15,7 +15,9 @@ dependencies = [
     "weave (>=0.52.43,<0.53.0)",
     "wandb (>=0.27.2,<0.28.0)",
     "langgraph-checkpoint-sqlite (>=3.1.0,<4.0.0)",
-    "httpx (>=0.28.1,<0.29.0)"
+    "httpx (>=0.28.1,<0.29.0)",
+    "sentence-transformers (>=5.6.0,<6.0.0)",
+    "chromadb (>=1.5.9,<2.0.0)"
 ]
 
 

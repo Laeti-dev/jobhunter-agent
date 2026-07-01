@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import ReactMarkdown from 'react-markdown'
 
 const EXPERIENCE_OPTIONS = [
   { value: '', label: 'Indifférent' },
@@ -21,6 +22,8 @@ function JobSearch() {
   const [offers, setOffers] = useState([])
   const [isSuggesting, setIsSuggesting] = useState(false)
   const [isSearching, setIsSearching] = useState(false)
+  const [analyzingId, setAnalyzingId] = useState(null)
+  const [analyses, setAnalyses] = useState({})
   const [error, setError] = useState(null)
 
   useEffect(() => {
@@ -45,6 +48,7 @@ function JobSearch() {
     event.preventDefault()
     setIsSearching(true)
     setOffers([])
+    setAnalyses({})
     setError(null)
 
     const body = {
@@ -72,16 +76,29 @@ function JobSearch() {
     }
   }
 
+  async function handleAnalyze(offerId) {
+    if (analyses[offerId]) return
+    setAnalyzingId(offerId)
+    try {
+      const response = await fetch('http://localhost:8000/jobs/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ offer_id: offerId }),
+      })
+      const data = await response.json()
+      setAnalyses((prev) => ({ ...prev, [offerId]: data.analysis }))
+    } catch {
+      setAnalyses((prev) => ({ ...prev, [offerId]: 'Erreur lors de l\'analyse.' }))
+    } finally {
+      setAnalyzingId(null)
+    }
+  }
+
   return (
     <div className="w-full max-w-2xl space-y-4">
-      <form
-        onSubmit={handleSearch}
-        className="bg-white rounded-2xl shadow-lg p-6 space-y-4"
-      >
+      <form onSubmit={handleSearch} className="bg-white rounded-2xl shadow-lg p-6 space-y-4">
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Mots-clés
-          </label>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Mots-clés</label>
           <input
             type="text"
             className="w-full border border-gray-300 rounded-xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
@@ -93,9 +110,7 @@ function JobSearch() {
 
         <div className="flex gap-3">
           <div className="flex-1">
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Expérience
-            </label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Expérience</label>
             <select
               className="w-full border border-gray-300 rounded-xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
               value={params.experience}
@@ -106,11 +121,8 @@ function JobSearch() {
               ))}
             </select>
           </div>
-
           <div className="flex-1">
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Niveau de formation
-            </label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Niveau de formation</label>
             <select
               className="w-full border border-gray-300 rounded-xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
               value={params.education_level}
@@ -132,20 +144,36 @@ function JobSearch() {
         </button>
       </form>
 
-      {error && (
-        <p className="text-center text-sm text-red-500">{error}</p>
-      )}
+      {error && <p className="text-center text-sm text-red-500">{error}</p>}
 
       {offers.map((offer) => (
-        <div key={offer.id} className="bg-white rounded-2xl shadow-sm p-5 space-y-1">
-          <h3 className="font-semibold text-gray-900 text-sm">{offer.intitule}</h3>
-          <p className="text-xs text-gray-500">
-            {offer.entreprise?.nom ?? 'Entreprise non précisée'}
-            {offer.lieuTravail?.libelle ? ` · ${offer.lieuTravail.libelle}` : ''}
-          </p>
-          <p className="text-xs text-gray-600 line-clamp-3 mt-1">
+        <div key={offer.id} className="bg-white rounded-2xl shadow-sm p-5 space-y-2">
+          <div className="flex justify-between items-start gap-3">
+            <div>
+              <h3 className="font-semibold text-gray-900 text-sm">{offer.intitule}</h3>
+              <p className="text-xs text-gray-500">
+                {offer.entreprise?.nom ?? 'Entreprise non précisée'}
+                {offer.lieuTravail?.libelle ? ` · ${offer.lieuTravail.libelle}` : ''}
+              </p>
+            </div>
+            <button
+              onClick={() => handleAnalyze(offer.id)}
+              disabled={analyzingId === offer.id}
+              className="shrink-0 bg-blue-50 hover:bg-blue-100 text-blue-600 px-3 py-1 rounded-lg text-xs font-medium disabled:opacity-50"
+            >
+              {analyzingId === offer.id ? 'Analyse...' : analyses[offer.id] ? 'Ré-analyser' : 'Analyser'}
+            </button>
+          </div>
+
+          <p className="text-xs text-gray-600 line-clamp-2">
             {offer.description?.slice(0, 200)}...
           </p>
+
+          {analyses[offer.id] && (
+            <div className="mt-3 pt-3 border-t border-gray-100 prose prose-sm text-gray-700">
+              <ReactMarkdown>{analyses[offer.id]}</ReactMarkdown>
+            </div>
+          )}
         </div>
       ))}
     </div>
