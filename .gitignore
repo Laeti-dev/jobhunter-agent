@@ -9,6 +9,9 @@ __pycache__/
 *.db-shm
 *.db-wal
 
+# ChromaDB persistent storage
+backend/chroma_db/
+
 # Environnement
 .env
 

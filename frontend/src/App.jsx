@@ -1,55 +1,61 @@
 import { useState } from 'react'
+import Welcome from './components/Welcome'
 import Chat from './components/Chat'
+import CVImport from './components/CVImport'
 import CVPreview from './components/CVPreview'
 import JobSearch from './components/JobSearch'
 
-const TABS = {
-  chat: { label: "Chat", endpoint: "/chat", placeholder: "Posez votre question...", stateful: false },
-  cv: { label: "CV Builder", endpoint: "/cv/chat", placeholder: "Répondez à l'agent...", stateful: true },
-  jobs: { label: "Offres", endpoint: null, placeholder: null, stateful: false },
-};
-
 function App() {
-  const [activeTab, setActiveTab] = useState("chat");
-  const [showCvPreview, setShowCvPreview] = useState(false);
-  const tab = TABS[activeTab];
+  const [screen, setScreen] = useState('welcome')
+  const [showCvPreview, setShowCvPreview] = useState(false)
 
   return (
-    <div className="min-h-screen bg-gray-100 flex flex-col items-center justify-center p-4 gap-4">
-      <div className="w-full max-w-2xl">
-        <h1 className="text-xl font-bold text-gray-800">JobHunter Agent</h1>
-        <p className="text-sm text-gray-500 mb-4">Votre assistant recherche d'emploi</p>
+    <div className="min-h-screen bg-gray-100 flex flex-col items-center justify-center p-4">
 
-        <div className="flex gap-2 mb-2">
-          {Object.entries(TABS).map(([key, value]) => (
-            <button
-              key={key}
-              onClick={() => setActiveTab(key)}
-              className={`px-4 py-2 rounded-lg text-sm font-medium ${
-                activeTab === key ? "bg-blue-500 text-white" : "bg-white text-gray-600"
-              }`}
-            >
-              {value.label}
-            </button>
-          ))}
-        </div>
-      </div>
+      {screen !== 'welcome' && (
+        <button
+          onClick={() => setScreen('welcome')}
+          className="self-start mb-4 text-sm text-gray-500 hover:text-gray-700"
+        >
+          ← Accueil
+        </button>
+      )}
 
-      {activeTab === 'jobs' ? (
-        <JobSearch />
-      ) : (
-        <Chat
-          key={tab.endpoint}
-          endpoint={tab.endpoint}
-          placeholder={tab.placeholder}
-          stateful={tab.stateful}
-          onCvReady={() => setShowCvPreview(true)}
+      {screen === 'welcome' && (
+        <Welcome
+          onStart={() => setScreen('job_search')}
+          onImport={() => setScreen('cv_import')}
+          onBuild={() => setScreen('cv_builder')}
         />
+      )}
+
+      {screen === 'cv_builder' && (
+        <div className="w-full max-w-2xl">
+          <h2 className="text-lg font-bold text-gray-800 mb-4">Créer mon CV</h2>
+          <Chat
+            key="cv_builder"
+            endpoint="/cv/chat"
+            placeholder="Répondez à l'agent..."
+            stateful
+            onCvReady={() => {
+              setShowCvPreview(true)
+              setScreen('job_search')
+            }}
+          />
+        </div>
+      )}
+
+      {screen === 'cv_import' && (
+        <CVImport onSuccess={() => setScreen('job_search')} />
+      )}
+
+      {screen === 'job_search' && (
+        <JobSearch />
       )}
 
       {showCvPreview && <CVPreview onClose={() => setShowCvPreview(false)} />}
     </div>
-  );
+  )
 }
 
-export default App;
+export default App

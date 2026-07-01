@@ -10,7 +10,7 @@ COLLECTION_NAME = "cv_index"
 class CVRagIndex:
     def __init__(self):
         self.model = SentenceTransformer(MODEL_NAME)
-        self.client = chromadb.Client()
+        self.client = chromadb.PersistentClient(path="./chroma_db")
         self._collection = None
 
     def _chunk_profile(self, profile: CVProfile) -> list[dict]:
