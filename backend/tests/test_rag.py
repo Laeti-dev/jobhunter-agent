@@ -23,8 +23,10 @@ def test_cv_has_been_chunked_correctly(sample_profile: CVProfile) -> list[dict]:
 
 def test_retrieve_returns_closest_chunks(sample_profile: CVProfile):
     def mock_encode(texts):
-        """Return a fixed-dimension vector for each text."""
-        return np.array([[1.0] * 10 for _ in texts])
+        # Each text gets a unique vector based on its position in the list.
+        # The query (single text, index 0) gets [0.0]*10, which is closest
+        # to the first indexed chunk (Résumé, also index 0 during indexing).
+        return np.array([[float(i)] * 10 for i in range(len(texts))])
 
     with patch.object(cv_rag, "model") as mock_model:
         mock_model.encode.side_effect = mock_encode
@@ -35,5 +37,6 @@ def test_retrieve_returns_closest_chunks(sample_profile: CVProfile):
     for r in results:
         assert "section" in r
         assert "text" in r
+        assert isinstance(r["text"], str)
     sections = {r["section"] for r in results}
     assert "Résumé" in sections
