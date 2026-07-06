@@ -31,7 +31,7 @@ def save_cv(profile: CVProfile) -> int:
 def get_latest_cv() -> CVProfile | None:
     """Retrieve the most recent CV profile from the database."""
     with get_connection() as conn:
-        cursor = conn.execute("SELECT * FROM cv_profile ORDER BY created_at DESC LIMIT 1")
+        cursor = conn.execute("SELECT * FROM cv_profile ORDER BY id DESC LIMIT 1")
         row = cursor.fetchone()
         if row:
             return CVProfile.model_validate_json(row[3])
