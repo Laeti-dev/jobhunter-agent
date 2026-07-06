@@ -456,3 +456,218 @@ completion(model=model, messages=messages, response_format=CVProfile, temperatur
 - Node.js version matters: Vite 6 requires Node 20.19+ or 22+ — use **nvm** to manage Node versions cleanly
 - `nvm install 22 && nvm use 22` upgrades Node without breaking other projects
 - When npm optional dependencies fail to install (rolldown binding issue), delete `node_modules` and `package-lock.json` then reinstall
+
+---
+
+## Phase 3 — RAG Pipeline (Retrieval-Augmented Generation)
+
+### What is RAG?
+
+RAG stands for **Retrieval-Augmented Generation**: we *retrieve* relevant information from a knowledge base, then *inject* it as context into the LLM so it can *generate* a grounded, accurate response.
+
+Without RAG, the LLM only knows what it learned during training.
+With RAG, we hand it specific documents to read **at query time**.
+
+```
+Question: "Does this CV match this job offer?"
+              ↓
+[Retrieval]   Which parts of the CV are most relevant to this offer?
+              ↓
+[Augmented]   Send to LLM: the offer + the most relevant CV sections
+              ↓
+[Generation]  LLM generates a structured analysis: strengths, gaps, suggestions
+```
+
+---
+
+### Step 1 — Semantic vectorisation (embeddings)
+
+The core idea: transform text into **numeric vectors** (lists of numbers) so that texts with the same *meaning* have vectors that are close together in mathematical space.
+
+```
+"Python, FastAPI, LangGraph"      →  [0.23, -0.71, 0.08, 0.45, ...]  (384 numbers)
+"Python backend developer"        →  [0.21, -0.69, 0.11, 0.43, ...]  ← close!
+"Chef, pastry, kitchen"           →  [-0.54, 0.33, -0.62, 0.12, ...]  ← far!
+```
+
+These vectors are produced by a specialised **embedding model** — in this project, `paraphrase-multilingual-MiniLM-L12-v2` from HuggingFace, which understands French.
+
+```python
+from sentence_transformers import SentenceTransformer
+
+model = SentenceTransformer("paraphrase-multilingual-MiniLM-L12-v2")
+vector = model.encode("Data Scientist Python machine learning")
+# → array([0.23, -0.71, 0.08, ...])  with 384 dimensions
+```
+
+**Why is this powerful?** Because semantic similarity (*meaning*) is captured, not just exact word matches. "Developer" and "Software Engineer" will have close vectors even if they share no words.
+
+---
+
+### Step 2 — What gets vectorised from the CV
+
+The CV is not vectorised as a single text blob — it is split into **chunks**, one per meaningful section. Each chunk is vectorised separately.
+
+```python
+# In utils/rag.py → _chunk_profile() method
+def _chunk_profile(self, profile: CVProfile) -> list[dict]:
+    chunks = []
+
+    # One chunk per section:
+    chunks.append({"id": "summary", "section": "Summary",
+                   "text": profile.summary})
+
+    chunks.append({"id": "target_role", "section": "Target role",
+                   "text": f"Target role: {profile.target_role}"})
+
+    for i, exp in enumerate(profile.experiences):
+        text = f"{exp.title} at {exp.company}. " + ". ".join(exp.achievements)
+        chunks.append({"id": f"exp_{i}", "section": "Experience", "text": text})
+
+    chunks.append({"id": "tech_skills", "section": "Technical skills",
+                   "text": "Skills: " + ", ".join(profile.tech_skills)})
+
+    # ... also education, projects, soft skills
+    return chunks
+```
+
+**Why split?** Because a job offer rarely needs the whole CV at once. It looks for specific skills, or a specific type of experience. By splitting, we can retrieve exactly the CV section that best matches the offer.
+
+---
+
+### Step 3 — Storage in ChromaDB
+
+ChromaDB is a **vector database** (vector store): it stores vectors and can search them by similarity very quickly.
+
+```python
+# In utils/rag.py → index_cv() method
+def index_cv(self, profile: CVProfile) -> None:
+    chunks = self._chunk_profile(profile)
+
+    # 1. Delete the old index (in case the CV was updated)
+    try:
+        self.client.delete_collection("cv_index")
+    except Exception:
+        pass
+
+    # 2. Create a fresh collection
+    self._collection = self.client.create_collection("cv_index")
+
+    # 3. Encode all texts into vectors in one batch (more efficient)
+    texts = [c["text"] for c in chunks]
+    embeddings = self.model.encode(texts).tolist()
+
+    # 4. Store: vectors + original texts + metadata
+    self._collection.add(
+        ids=[c["id"] for c in chunks],
+        embeddings=embeddings,       # the numeric vectors
+        documents=texts,             # the original texts (to retrieve later)
+        metadatas=[{"section": c["section"]} for c in chunks],  # labels
+    )
+```
+
+Concretely, ChromaDB stores in `./chroma_db/` (persistent on disk) a table like:
+
+| id | section | text | vector |
+|---|---|---|---|
+| `summary` | Summary | "I am a Data Scientist..." | [0.23, -0.71, ...] |
+| `exp_0` | Experience | "AI engineer at LG Electronics..." | [0.41, -0.55, ...] |
+| `tech_skills` | Technical skills | "Python, FastAPI, LangGraph..." | [0.18, -0.80, ...] |
+
+---
+
+### Step 4 — Retrieval
+
+When a job offer arrives, its text is vectorised the same way, then ChromaDB is asked: "which CV vectors are closest to this vector?"
+
+```python
+# In utils/rag.py → retrieve() method
+def retrieve(self, query_text: str, n_results: int = 3) -> list[dict]:
+    # 1. Vectorise the job offer text
+    query_embedding = self.model.encode([query_text]).tolist()
+
+    # 2. Find the n closest chunks in ChromaDB
+    results = self._collection.query(
+        query_embeddings=query_embedding,
+        n_results=n_results,
+    )
+
+    # 3. Return the matched texts and their section labels
+    return [
+        {"section": results["metadatas"][0][i]["section"],
+         "text": results["documents"][0][i]}
+        for i in range(len(results["documents"][0]))
+    ]
+```
+
+Concrete example — for the offer "Senior AI Engineer — Python, LLM, RAG systems":
+
+```
+→ [Technical skills]  "Python, FastAPI, LangGraph, scikit-learn"   (score: 0.92)
+→ [Summary]           "I am a passionate Data Scientist..."          (score: 0.84)
+→ [Experience]        "AI engineer at LG Electronics..."              (score: 0.79)
+```
+
+No keyword matching: "LangGraph" and "LLM systems" are semantically close even if the CV never says "LLM systems" explicitly.
+
+---
+
+### Step 5 — Augmented generation (LLM + context)
+
+The retrieved CV sections and the job offer text are sent together to the LLM:
+
+```python
+# In utils/rag.py → analyze_offer() function
+def analyze_offer(offer: dict, retrieved_chunks: list[dict]) -> str:
+    # Format the retrieved CV context
+    context = "\n\n".join(
+        f"[{chunk['section']}] {chunk['text']}"
+        for chunk in retrieved_chunks
+    )
+
+    messages = [
+        {"role": "system", "content": """You are a recruitment expert. Analyse the match
+         between the candidate profile and the job offer. Structure your answer in 3 parts:
+         1. Strengths | 2. Gaps | 3. Suggestions"""},
+        {"role": "user", "content":
+            f"# Job offer\n{offer['description'][:2000]}\n\n"
+            f"# Relevant CV sections\n{context}"},
+    ]
+
+    response = completion(model="ollama/qwen2.5:7b", messages=messages)
+    return response.choices[0].message.content
+```
+
+The LLM receives targeted context (3 CV sections, not the whole CV), which:
+- Reduces hallucination risk (it works from real facts extracted from the CV)
+- Reduces context size (more efficient, fewer tokens)
+- Improves precision (it analyses the right CV subset for this offer)
+
+---
+
+### Full pipeline diagram
+
+```
+CV (CVProfile)
+    ↓ _chunk_profile()
+[Summary] [Experience] [Skills] [Education] [Projects]
+    ↓ model.encode()                    ↑
+[0.23, -0.71, ...]                      │ retrieve()
+    ↓ collection.add()                  │
+    ChromaDB (chroma_db/)               │ query_embedding
+    ↑___________________________________|
+                              ↑
+                       Job offer text
+                       → model.encode()
+                       → "Data Scientist Python RAG"
+                       → [0.19, -0.68, ...]
+
+Retrieved sections → LLM (Qwen 2.5) → Structured analysis
+```
+
+### Technical choices
+
+- **`paraphrase-multilingual-MiniLM-L12-v2`**: HuggingFace embedding model, 471 MB, native French support, good quality/speed tradeoff on Apple M4 Pro
+- **`ChromaDB PersistentClient`**: stores the index on disk (`./chroma_db/`), survives server restarts
+- **`n_results=3`**: retrieve the 3 most relevant sections — enough context without overwhelming the LLM prompt
+- **Section-based chunking** rather than fixed sliding-window chunking: better suited to CVs, which naturally have semantically homogeneous sections
