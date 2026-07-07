@@ -22,6 +22,9 @@ poetry.lock
 node_modules/
 dist/
 
+# DeepEval
+.deepeval/
+
 # IDE
 .vscode/
 .idea/
