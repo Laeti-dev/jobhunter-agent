@@ -5,11 +5,15 @@ from cv_model import CVProfile
 
 MODEL_NAME = "paraphrase-multilingual-MiniLM-L12-v2"  # multilingual for French support
 COLLECTION_NAME = "cv_index"
+GITHUB_COLLECTION_NAME = "github_projects"
+
+# Single model instance shared by all RAG classes — loading once saves ~2s at startup
+_embedding_model = SentenceTransformer(MODEL_NAME)
 
 
 class CVRagIndex:
     def __init__(self):
-        self.model = SentenceTransformer(MODEL_NAME)
+        self.model = _embedding_model
         self.client = chromadb.PersistentClient(path="./chroma_db")
         self._collection = None
 
@@ -87,7 +91,62 @@ class CVRagIndex:
         ]
 
 
+class GitHubRepoIndex:
+    """Index GitHub repo documents in ChromaDB for multi-source RAG."""
+
+    def __init__(self):
+        self.model = _embedding_model
+        self.client = chromadb.PersistentClient(path="./chroma_db")
+        self._collection = None
+
+    def index_repos(self, documents: list[str], repo_names: list[str]) -> None:
+        """Embed repo documents and store them in ChromaDB."""
+        try:
+            self.client.delete_collection(GITHUB_COLLECTION_NAME)
+        except Exception:
+            pass
+        self._collection = self.client.create_collection(GITHUB_COLLECTION_NAME)
+
+        embeddings = self.model.encode(documents).tolist()
+        self._collection.add(
+            ids=repo_names,
+            embeddings=embeddings,
+            documents=documents,
+            metadatas=[{"repo": name} for name in repo_names],
+        )
+
+    def retrieve(self, query_text: str, n_results: int = 3) -> list[dict]:
+        """Find the most relevant GitHub repos for a given job offer query."""
+        if self._collection is None:
+            self._collection = self.client.get_or_create_collection(GITHUB_COLLECTION_NAME)
+
+        count = self._collection.count()
+        if count == 0:
+            return []
+
+        query_embedding = self.model.encode([query_text]).tolist()
+        results = self._collection.query(
+            query_embeddings=query_embedding,
+            n_results=min(n_results, count),
+        )
+        return [
+            {
+                "repo": results["metadatas"][0][i]["repo"],
+                "text": results["documents"][0][i],
+            }
+            for i in range(len(results["documents"][0]))
+        ]
+
+    def list_repos(self) -> list[str]:
+        """Return the names of all indexed repos."""
+        if self._collection is None:
+            self._collection = self.client.get_or_create_collection(GITHUB_COLLECTION_NAME)
+        results = self._collection.get()
+        return [meta["repo"] for meta in results["metadatas"]]
+
+
 cv_rag = CVRagIndex()
+github_rag = GitHubRepoIndex()
 
 
 def analyze_offer(
