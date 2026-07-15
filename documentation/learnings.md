@@ -671,3 +671,196 @@ Retrieved sections → LLM (Qwen 2.5) → Structured analysis
 - **`ChromaDB PersistentClient`**: stores the index on disk (`./chroma_db/`), survives server restarts
 - **`n_results=3`**: retrieve the 3 most relevant sections — enough context without overwhelming the LLM prompt
 - **Section-based chunking** rather than fixed sliding-window chunking: better suited to CVs, which naturally have semantically homogeneous sections
+
+---
+
+## Phase 3 (continued) — Qualitative Evaluation with DeepEval
+
+### Why unit tests are not enough for a RAG pipeline
+
+Unit tests verify that the **code runs correctly**: the right number of chunks, the correct keys, no exceptions thrown. They say nothing about whether the pipeline produces **good answers**.
+
+Two pipelines can have identical unit tests and yet produce very different quality:
+
+```
+Pipeline A: retrieves the wrong CV sections → generates a hallucinated analysis  ← unit tests PASS
+Pipeline B: retrieves the right sections → generates a faithful, relevant analysis ← unit tests PASS
+```
+
+Qualitative evaluation adds a second layer: it measures the **semantic quality** of outputs, not just their structure.
+
+---
+
+### The three key RAG metrics
+
+For a pipeline that retrieves CV sections and generates a job match analysis, three metrics matter:
+
+| Metric | Question it answers | Applied to this project |
+|---|---|---|
+| **Contextual Relevancy** | Are the retrieved chunks relevant to the query? | Does `cv_rag.retrieve(offer_text)` return useful CV sections? |
+| **Faithfulness** | Does the generated answer only use facts from the retrieved context? | Does `analyze_offer()` hallucinate skills absent from the CV? |
+| **Answer Relevancy** | Does the answer directly address the question asked? | Does the analysis actually talk about the CV ↔ offer match? |
+
+---
+
+### DeepEval — a framework for LLM evaluation
+
+DeepEval structures evaluation around a central object: the `LLMTestCase`.
+
+```python
+from deepeval.test_case import LLMTestCase
+from deepeval.metrics import FaithfulnessMetric
+
+test_case = LLMTestCase(
+    input="AI Engineer - Python / LangChain job offer...",       # the query
+    actual_output="Here is the match analysis: ...",             # what the pipeline produced
+    retrieval_context=["Developer at ACME. Built...", "Python, FastAPI..."],  # retrieved chunks
+)
+
+metric = FaithfulnessMetric(threshold=0.7, model=judge)
+metric.measure(test_case)
+
+print(metric.score)   # 0.0 to 1.0
+print(metric.reason)  # the judge's explanation
+```
+
+- `input` → the query sent to the RAG pipeline (the job offer text)
+- `actual_output` → what `analyze_offer()` returned
+- `retrieval_context` → the chunks returned by `cv_rag.retrieve()`
+
+DeepEval uses an LLM internally to *judge* each metric — this is the **LLM-as-a-judge** pattern (see below).
+
+---
+
+### LLM-as-a-judge
+
+Traditional evaluation compares outputs to a fixed "expected answer" (ground truth). This is easy for classification tasks, but breaks down for free-text generation: there is no single correct answer to "is this analysis faithful to the CV?"
+
+**LLM-as-a-judge** uses a second language model to evaluate the first:
+
+```
+your pipeline output
+        ↓
+   Judge LLM reads: output + retrieval_context + evaluation criteria
+        ↓
+   Score (0–1) + explanation
+```
+
+The judge LLM is given a specific rubric for each metric. For Faithfulness, it checks each claim in the output against the retrieved context and counts how many are actually supported.
+
+**Limitation**: the judge model can itself make mistakes. A stronger judge (larger model, better instruction-following) produces more reliable scores. This is why judge quality matters independently of the pipeline being evaluated.
+
+---
+
+### Custom judge with `DeepEvalBaseLLM`
+
+DeepEval defaults to OpenAI GPT-4 as its judge. To use a different model — Ollama, HuggingFace, Anthropic — you subclass `DeepEvalBaseLLM` and implement three methods:
+
+```python
+from deepeval.models import DeepEvalBaseLLM
+import litellm
+
+class OllamaJudge(DeepEvalBaseLLM):
+
+    OLLAMA_MODEL = "ollama/qwen2.5:7b"
+
+    def load_model(self) -> str:
+        # Return the model identifier (or a model object for local models).
+        return self.OLLAMA_MODEL
+
+    def generate(self, prompt: str, schema=None) -> str | BaseModel:
+        # DeepEval calls this with a prompt; we forward it to LiteLLM.
+        # If schema is provided, DeepEval wants a structured Pydantic object back —
+        # we handle this by embedding the schema in the prompt and parsing the JSON response.
+        response = litellm.completion(
+            model=self.OLLAMA_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.0,
+        )
+        return response.choices[0].message.content
+
+    async def a_generate(self, prompt, schema=None):
+        return self.generate(prompt, schema)   # synchronous fallback
+
+    def get_model_name(self) -> str:
+        return "qwen2.5:7b (Ollama local)"
+```
+
+The `schema` parameter is how DeepEval requests structured outputs from the judge. Since Ollama models don't support native function calling, we embed the JSON schema into the prompt and parse the response with `re.search(r"\{.*\}", raw, re.DOTALL)`.
+
+---
+
+### Why Ollama rather than HuggingFace for the judge
+
+HuggingFace's **serverless inference API** (free tier) was initially the target for the judge model, but two blockers emerged:
+
+1. **LiteLLM's `huggingface/` prefix** routes to HuggingFace's `/v1/chat/completions` endpoint, which only accepts a curated list of models — most models (including `Mistral-7B-Instruct-v0.3`) return `"not a chat model"`.
+2. **HuggingFace Inference Providers** (the newer system) routes models through third-party providers (Cerebras, Sambanova, Novita…). Since mid-2024, this requires enabling providers in account settings *and* paying for most capable models — **there is no longer a meaningful free tier** for chat-capable models.
+
+Ollama runs locally, costs nothing, and `qwen2.5:7b` is already used by this project for CV analysis — making it the natural judge choice.
+
+**General lesson**: cloud inference APIs change pricing and availability faster than documentation updates. For reproducible local development, local inference (Ollama) is more stable than free-tier cloud endpoints.
+
+---
+
+### Separating quality tests from unit tests with pytest markers
+
+Quality tests (DeepEval) make real LLM calls — they are slow (tens of seconds each) and depend on Ollama being running. Mixing them with unit tests would break the fast feedback loop.
+
+**pytest markers** solve this by tagging tests so they can be run selectively:
+
+```python
+# In pyproject.toml — declare the custom marker:
+[tool.pytest.ini_options]
+markers = [
+    "deepeval: quality tests using real LLMs — require Ollama running",
+]
+
+# In the test file — tag quality tests:
+@pytest.mark.deepeval
+def test_faithfulness(rag_result):
+    ...
+```
+
+```bash
+# Daily development — fast unit tests only:
+pytest -m "not deepeval"
+
+# When the RAG pipeline changes — run quality evaluation:
+pytest -m deepeval -v -s
+```
+
+The `-s` flag (`--capture=no`) tells pytest not to suppress stdout, so `verbose_mode=True` on DeepEval metrics prints the judge's step-by-step reasoning directly in the terminal.
+
+---
+
+### Module-scoped fixtures for expensive setup
+
+Quality tests share expensive setup (indexing the CV, generating an analysis with a real LLM call). Running this once per test function would triple the test duration.
+
+`scope="module"` runs the fixture once for the entire test file:
+
+```python
+@pytest.fixture(scope="module")
+def rag_result():
+    """Index CV, retrieve chunks, generate analysis — once for the whole module."""
+    cv_rag.index_cv(EVAL_PROFILE)
+    query = f"{SAMPLE_OFFER['intitule']} {SAMPLE_OFFER['description']}"
+    chunks = cv_rag.retrieve(query, n_results=3)
+    analysis = analyze_offer(SAMPLE_OFFER, chunks)
+    return {"query": query, "chunks": chunks, "analysis": analysis}
+```
+
+**Constraint**: module-scoped fixtures cannot depend on function-scoped fixtures (like `sample_profile` from `conftest.py`). The profile must be defined as a module-level constant in the quality test file — not a problem in practice since the evaluation profile is fixed by design.
+
+---
+
+### `verbose_mode=True` — reading the judge's reasoning
+
+Adding `verbose_mode=True` to a metric makes DeepEval print its internal reasoning steps — which claims it checked, which it judged faithful or not, and why:
+
+```python
+metric = FaithfulnessMetric(threshold=0.7, model=OllamaJudge(), verbose_mode=True)
+```
+
+This is essential for debugging a failing quality test: instead of just seeing `score=0.4`, you see *which* claim in the output the judge flagged as unsupported by the retrieved context.

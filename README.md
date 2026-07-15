@@ -18,14 +18,15 @@ This project is designed for learning: each phase introduces new technical conce
 | Backend | FastAPI | REST API |
 | LLM Router | LiteLLM | Model-agnostic LLM calls |
 | LLM (local) | Ollama (Llama 3.2, Mistral…) | Local inference on Apple Silicon |
-| LLM (cloud) | HuggingFace Inference API | Cloud backup / benchmarking |
 | Agent Framework | LangGraph | Stateful agent graphs |
 | Job Offers API | France Travail API (OAuth2) | Real job postings data source |
+| GitHub API | GitHub REST API | Fetch pinned repos for cover letter RAG |
 | HTTP Client | httpx | Async API calls to France Travail |
 | Embeddings | sentence-transformers (HuggingFace) | Semantic search for RAG |
-| Vector Store | ChromaDB | Store and retrieve embeddings |
+| Vector Store | ChromaDB | Store and retrieve embeddings (CV + GitHub repos) |
 | Database | SQLite | Persist CV data and chat history |
 | Model Evaluation | Weave (W&B) | Benchmark LLM outputs against ground-truth criteria |
+| Quality Evaluation | DeepEval | LLM-as-a-judge RAG quality metrics (faithfulness, relevancy) |
 | Containerisation | Docker | Packaging (added in Phase 3–4) |
 
 ---
@@ -58,7 +59,7 @@ The chat interface shows a loading state while the agent processes the request, 
 - **Known limitation** (kept as-is, documented in `documentation/learnings.md`): on long conversations, the small/medium local models occasionally lose track of the system prompt's rules (e.g. skip a section before declaring completion) or residually hallucinate an inferred soft skill — a real capability ceiling of these models rather than a code bug
 
 ### Phase 3 — Job Search & RAG Analysis
-> Skills: OAuth2 API integration, RAG pipeline, embeddings, semantic search, ChromaDB
+> Skills: OAuth2 API integration, RAG pipeline, embeddings, semantic search, ChromaDB, qualitative evaluation
 
 Rather than pasting a job posting manually, the app connects to the **France Travail API** (Pôle Emploi) to fetch real job offers matching the user's profile.
 
@@ -67,13 +68,18 @@ Rather than pasting a job posting manually, the app connects to the **France Tra
 - The app authenticates with France Travail via **OAuth2 client credentials** (token cached and auto-refreshed)
 - Job offers are fetched from `/offres/search` and displayed as selectable cards
 - Selecting an offer triggers a **RAG pipeline**: the offer text is embedded with `sentence-transformers`, compared semantically against the stored CV using ChromaDB, and an LLM generates a detailed match analysis (strengths, gaps, suggestions)
+- **Qualitative evaluation** with DeepEval: three RAG metrics (contextual relevancy, faithfulness, answer relevancy) measured using a local Ollama model as LLM-as-a-judge
 
-### Phase 4 — Cover Letter & Benchmark (evaluation)
-> Skills: prompt chaining, document generation, model evaluation
+### Phase 4a — Cover Letter with Multi-Source RAG
+> Skills: multi-source RAG, GitHub API, prompt chaining, Human-in-the-loop, document generation
 
-- Generate a personalised cover letter based on the CV and job posting
-- Benchmark multiple LLMs (Llama, Mistral, etc.) on the same task
-- Compare outputs against a reference CV to measure quality
+Rather than generating a generic cover letter, the app fetches the user's **pinned GitHub repositories** and indexes them alongside the CV, so the letter can cite concrete projects as proof of skills.
+
+- Fetch the user's 6 pinned repos from the **GitHub REST API** (public, no token required)
+- Index each repo's README and metadata into a dedicated ChromaDB collection (`github_projects`)
+- When an offer is selected, run **two RAG queries in parallel**: one against the CV, one against GitHub repos
+- The LLM receives both sets of retrieved chunks to write a cover letter that maps the offer's qualification points to real, verifiable projects
+- A **Human-in-the-loop** confirmation step lets the user review before the letter is generated
 
 ### Phase 5 — Autonomous Web Agent & Interview Simulation (advanced agentic)
 > Skills: tool use, agentic loops, web scraping, multi-agent coordination
@@ -150,6 +156,7 @@ Runs on [http://localhost:5173](http://localhost:5173) — open this URL in your
 - [x] Project planning and architecture design
 - [x] Phase 1 — Simple Chatbot
 - [x] Phase 2 — CV Builder Agent
-- [ ] Phase 3 — Job Search & RAG Analysis
-- [ ] Phase 4 — Cover Letter & Benchmark
+- [x] Phase 3 — Job Search & RAG Analysis
+- [ ] Phase 4a — Cover Letter with Multi-Source RAG
+- [ ] Phase 4b — Market Trends (weekly recap from indexed offers)
 - [ ] Phase 5 — Autonomous Web Agent & Interview Simulation
