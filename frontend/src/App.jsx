@@ -2,6 +2,7 @@ import { useState } from 'react'
 import Welcome from './components/Welcome'
 import Chat from './components/Chat'
 import CVImport from './components/CVImport'
+import CVPanel from './components/CVPanel'
 import CVPreview from './components/CVPreview'
 import JobSearch from './components/JobSearch'
 
@@ -50,7 +51,10 @@ function App() {
       )}
 
       {screen === 'job_search' && (
-        <JobSearch />
+        <div className="w-full flex flex-col items-center gap-4">
+          <CVPanel onShowPreview={() => setShowCvPreview(true)} />
+          <JobSearch />
+        </div>
       )}
 
       {showCvPreview && <CVPreview onClose={() => setShowCvPreview(false)} />}
