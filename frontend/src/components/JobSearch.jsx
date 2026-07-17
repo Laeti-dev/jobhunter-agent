@@ -224,6 +224,9 @@ function ChatColumn({ onNavigate, onSearch }) {
   const [showCvActions, setShowCvActions] = useState(false)
   const [showSearchConfirm, setShowSearchConfirm] = useState(false)
   const [suggestedRole, setSuggestedRole] = useState('')
+  const [showRolePicker, setShowRolePicker] = useState(false)
+  const [alternativeRoles, setAlternativeRoles] = useState([])
+  const [loadingRoles, setLoadingRoles] = useState(false)
   const [awaitingCustomRole, setAwaitingCustomRole] = useState(false)
   const [uploadingCv, setUploadingCv] = useState(false)
   const bottomRef = useRef(null)
@@ -259,7 +262,7 @@ function ChatColumn({ onNavigate, onSearch }) {
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, isLoading, showCvActions, showSearchConfirm])
+  }, [messages, isLoading, showCvActions, showSearchConfirm, showRolePicker, loadingRoles])
 
   function confirmSearch(role) {
     setShowSearchConfirm(false)
@@ -271,12 +274,49 @@ function ChatColumn({ onNavigate, onSearch }) {
     onSearch?.(role)
   }
 
-  function requestCustomRole() {
+  async function requestCustomRole() {
     setShowSearchConfirm(false)
-    setAwaitingCustomRole(true)
+    setLoadingRoles(true)
     setMessages((prev) => [
       ...prev,
       { role: 'user', content: 'Je cherche un autre poste' },
+    ])
+    try {
+      const res = await fetch(`http://localhost:8000/jobs/suggest-roles?role=${encodeURIComponent(suggestedRole)}`)
+      const data = await res.json()
+      setAlternativeRoles(data.roles ?? [])
+      setMessages((prev) => [
+        ...prev,
+        { role: 'assistant', content: 'Voici 3 postes qui correspondent à votre profil :' },
+      ])
+      setShowRolePicker(true)
+    } catch {
+      setMessages((prev) => [
+        ...prev,
+        { role: 'assistant', content: 'Quel poste recherchez-vous ?' },
+      ])
+      setAwaitingCustomRole(true)
+    } finally {
+      setLoadingRoles(false)
+    }
+  }
+
+  function pickRole(role) {
+    setShowRolePicker(false)
+    setSuggestedRole(role)
+    setMessages((prev) => [
+      ...prev,
+      { role: 'user', content: role },
+      { role: 'assistant', content: `Lancement de la recherche pour **${role}**...` },
+    ])
+    onSearch?.(role)
+  }
+
+  function openFreeInput() {
+    setShowRolePicker(false)
+    setAwaitingCustomRole(true)
+    setMessages((prev) => [
+      ...prev,
       { role: 'assistant', content: 'Quel poste recherchez-vous ?' },
     ])
   }
@@ -387,6 +427,35 @@ function ChatColumn({ onNavigate, onSearch }) {
               className="text-left text-xs font-medium px-3 py-2 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50"
             >
               ✏️ Non, autre poste
+            </button>
+          </div>
+        )}
+
+        {/* Loading spinner while fetching role suggestions */}
+        {loadingRoles && (
+          <div className="flex justify-start pl-1 pt-1">
+            <span className="text-xs" style={{ color: C.sarcelle }}>Analyse du profil...</span>
+          </div>
+        )}
+
+        {/* Alternative role picker */}
+        {showRolePicker && (
+          <div className="flex flex-col gap-2 pl-1 pt-1">
+            {alternativeRoles.map((role) => (
+              <button
+                key={role}
+                onClick={() => pickRole(role)}
+                className="text-left text-xs font-medium px-3 py-2 rounded-lg border transition-colors hover:opacity-90"
+                style={{ borderColor: C.sarcelle, color: C.sarcelle }}
+              >
+                {role}
+              </button>
+            ))}
+            <button
+              onClick={openFreeInput}
+              className="text-left text-xs font-medium px-3 py-2 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50"
+            >
+              ✏️ Autre...
             </button>
           </div>
         )}

@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from utils.database import get_latest_cv
 from utils.france_travail import france_travail
-from utils.rag import cv_rag, analyze_offer, score_offers
+from utils.rag import cv_rag, analyze_offer, score_offers, suggest_alternative_roles
 
 router = APIRouter(prefix="/jobs")
 
@@ -43,6 +43,19 @@ def search_offers(query: SearchRequest):
         region=query.region,
     )
     return {"offers": offers, "total": len(offers)}
+
+
+@router.get("/suggest-roles")
+def suggest_roles(role: str):
+    """Ask the LLM to suggest 3 job titles close to `role`, based on the stored CV."""
+    cv = get_latest_cv()
+    if cv is None:
+        raise HTTPException(status_code=404, detail="Aucun CV trouvé.")
+    try:
+        roles = suggest_alternative_roles(cv, searched_role=role)
+        return {"roles": roles}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/{offer_id}")

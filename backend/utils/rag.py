@@ -1,5 +1,6 @@
 from sentence_transformers import SentenceTransformer
 import chromadb
+import json
 from litellm import completion
 from cv_model import CVProfile
 
@@ -184,6 +185,44 @@ def analyze_offer(
 
     response = completion(model=model, messages=messages, temperature=0.3)
     return response.choices[0].message.content
+
+
+def suggest_alternative_roles(
+    cv: CVProfile,
+    searched_role: str,
+    model: str = "ollama/qwen2.5:7b",
+) -> list[str]:
+    """Ask the LLM to suggest 3 job titles close to searched_role, based on the CV profile."""
+    skills = ", ".join((cv.tech_skills or [])[:10]) or "non précisées"
+
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "Tu es un conseiller en orientation professionnelle. "
+                "Réponds UNIQUEMENT avec un tableau JSON de 3 chaînes de caractères, "
+                "sans texte supplémentaire ni markdown. "
+                "Exemple : [\"Titre A\", \"Titre B\", \"Titre C\"]"
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"Un candidat cherche un poste de **{searched_role}**.\n"
+                f"Ses compétences : {skills}\n\n"
+                "Propose 3 titres de postes proches ou similaires, "
+                "que l'on trouve couramment sur le marché de l'emploi français."
+            ),
+        },
+    ]
+
+    response = completion(model=model, messages=messages, temperature=0.7)
+    content = response.choices[0].message.content.strip()
+    roles = json.loads(content)
+    if not isinstance(roles, list):
+        raise ValueError("Le LLM n'a pas renvoyé un tableau JSON.")
+    return [str(r) for r in roles[:3]]
+
 
 def score_offers(offers: list[dict]) -> list[dict]:
     """
