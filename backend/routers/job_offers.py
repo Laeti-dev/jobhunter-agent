@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from utils.database import get_latest_cv
 from utils.france_travail import france_travail
-from utils.rag import cv_rag, analyze_offer, score_offers, suggest_alternative_roles
+from utils.rag import cv_rag, analyze_offer, score_offers, suggest_alternative_roles, summarize_offer, enrich_offer_detail
 
 router = APIRouter(prefix="/jobs")
 
@@ -56,6 +56,32 @@ def suggest_roles(role: str):
         return {"roles": roles}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{offer_id}/enrich")
+def enrich_offer(offer_id: str):
+    """
+    Fetch full offer detail, then return:
+    - a 3-bullet LLM summary
+    - matched_skills (CV skills found in offer)
+    - missing_skills (tech skills required but absent from CV)
+    - the raw description
+    """
+    cv = get_latest_cv()
+    cv_skills = cv.tech_skills or [] if cv else []
+
+    offer_detail = france_travail.get_offer(offer_id)
+    description = offer_detail.get("description", "")
+
+    summary = summarize_offer(description)
+    skill_tags = enrich_offer_detail(offer_detail, cv_skills)
+
+    return {
+        "summary": summary,
+        "matched_skills": skill_tags["matched_skills"],
+        "missing_skills": skill_tags["missing_skills"],
+        "description": description,
+    }
 
 
 @router.get("/{offer_id}")

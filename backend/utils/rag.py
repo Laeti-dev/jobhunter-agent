@@ -3,6 +3,7 @@ import chromadb
 import json
 from litellm import completion
 from cv_model import CVProfile
+from utils.database import get_latest_cv
 
 MODEL_NAME = "paraphrase-multilingual-MiniLM-L12-v2"  # multilingual for French support
 COLLECTION_NAME = "cv_index"
@@ -224,11 +225,120 @@ def suggest_alternative_roles(
     return [str(r) for r in roles[:3]]
 
 
+def filter_technical_skills(
+    skills: list[str],
+    model: str = "ollama/qwen2.5:7b",
+) -> list[str]:
+    """
+    Send a list of raw competences to the LLM.
+    Returns only the technical ones (languages, frameworks, tools, methodologies).
+    One single LLM call — designed to be used on a batch across all offers.
+    """
+    if not skills:
+        return []
+
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "Tu es un expert en recrutement tech. "
+                "Réponds UNIQUEMENT avec un tableau JSON des compétences techniques, "
+                "sans texte supplémentaire ni markdown. "
+                "Garde : langages, frameworks, outils, technologies, méthodes techniques (ex: Agile, CI/CD). "
+                "Exclus : soft skills, qualités personnelles, compétences non techniques "
+                "(ex: 'Travail en équipe', 'Rigueur', 'Sens du service'). "
+                "Exemple de sortie : [\"Python\", \"Docker\", \"SQL\", \"Agile\"]"
+            ),
+        },
+        {
+            "role": "user",
+            "content": f"Filtre cette liste : {json.dumps(skills, ensure_ascii=False)}",
+        },
+    ]
+
+    response = completion(model=model, messages=messages, temperature=0.1)
+    content = response.choices[0].message.content.strip()
+    try:
+        filtered = json.loads(content)
+        if isinstance(filtered, list):
+            return [str(s) for s in filtered]
+    except json.JSONDecodeError:
+        pass
+    return skills  # fallback: keep all if parsing fails
+
+
+def tag_matched_skills(offer: dict, cv_skills_lower: list[str]) -> list[str]:
+    """
+    Return CV skills (lowercase) found by substring in the offer text.
+    Used at search time — only green tags, no missing skills yet.
+    """
+    offer_text = f"{offer.get('intitule', '')} {offer.get('description', '')}".lower()
+    return [s for s in cv_skills_lower if s in offer_text][:6]
+
+
+def summarize_offer(description: str, model: str = "ollama/qwen2.5:7b") -> list[str]:
+    """Ask the LLM to summarize an offer description in exactly 3 bullet points."""
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "Tu es un expert en recrutement. Résume l'offre en exactement 3 points clés : "
+                "les missions principales, la stack technique, et le profil attendu. "
+                "Réponds UNIQUEMENT avec un tableau JSON de 3 chaînes, sans texte ni markdown. "
+                "Exemple : [\"Mission A\", \"Stack B\", \"Profil C\"]"
+            ),
+        },
+        {
+            "role": "user",
+            "content": f"Résume cette offre en 3 points :\n\n{description[:3000]}",
+        },
+    ]
+    response = completion(model=model, messages=messages, temperature=0.3)
+    content = response.choices[0].message.content.strip()
+    try:
+        bullets = json.loads(content)
+        if isinstance(bullets, list):
+            return [str(b) for b in bullets[:3]]
+    except json.JSONDecodeError:
+        pass
+    return [description[:300]]  # fallback: first 300 chars
+
+
+def enrich_offer_detail(offer_detail: dict, cv_skills: list[str]) -> dict:
+    """
+    Build enriched skill tags from a full offer detail (which includes 'competences').
+    Returns matched_skills (green) and missing_skills (red) using the LLM-filtered tech stack.
+    """
+    cv_skills_lower = [s.lower() for s in cv_skills]
+
+    raw_competences = [
+        c["libelle"]
+        for c in offer_detail.get("competences", [])
+        if c.get("exigence") in ("E", "S")
+    ]
+    tech_competences = filter_technical_skills(raw_competences)
+    tech_set_lower = {s.lower() for s in tech_competences}
+
+    offer_text = f"{offer_detail.get('intitule', '')} {offer_detail.get('description', '')}".lower()
+    matched = [s for s in cv_skills if s.lower() in offer_text][:6]
+    missing = [
+        s for s in tech_competences
+        if not any(cv_s in s.lower() or s.lower() in cv_s for cv_s in cv_skills_lower)
+        and s.lower() in tech_set_lower
+    ][:5]
+
+    return {"matched_skills": matched, "missing_skills": missing}
+
+
 def score_offers(offers: list[dict]) -> list[dict]:
     """
     Score each offer against the CV and GitHub repos using embedding similarity.
     Returns the offers sorted by relevance, each enriched with 'score' and 'github_matches'.
     """
+    cv = get_latest_cv()
+    cv_skills = cv.tech_skills or [] if cv else []
+    cv_skills_lower = [s.lower() for s in cv_skills]
+
     offer_texts = [
         f"{offer.get('intitule', '')} {offer.get('description', '')[:1000]}"
         for offer in offers
@@ -281,6 +391,7 @@ def score_offers(offers: list[dict]) -> list[dict]:
             **offer,
             "score": round(0.6 * score_cv + 0.4 * score_github, 4),
             "github_matches": github_matches,
+            "matched_skills": tag_matched_skills(offer, cv_skills_lower),
         })
 
     scored.sort(key=lambda x: x["score"], reverse=True)

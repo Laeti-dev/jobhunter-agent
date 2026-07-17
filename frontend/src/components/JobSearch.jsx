@@ -102,6 +102,25 @@ function TopBar({ keywords, setKeywords, region, setRegion, regions, isSearching
 // ── Offer card ────────────────────────────────────────────────
 function OfferCard({ offer, ratio, onAnalyze, isAnalyzing, analysis }) {
   const [showLocation, setShowLocation] = useState(false)
+  const [showDetail, setShowDetail] = useState(false)
+  const [detail, setDetail] = useState(null)
+  const [loadingDetail, setLoadingDetail] = useState(false)
+
+  async function handleToggleDetail() {
+    if (showDetail) { setShowDetail(false); return }
+    setShowDetail(true)
+    if (detail) return  // already fetched
+    setLoadingDetail(true)
+    try {
+      const res = await fetch(`http://localhost:8000/jobs/${offer.id}/enrich`)
+      const data = await res.json()
+      setDetail(data)
+    } catch {
+      setDetail({ summary: ["Erreur lors du chargement du détail."], matched_skills: [], missing_skills: [], description: "" })
+    } finally {
+      setLoadingDetail(false)
+    }
+  }
 
   const pct      = Math.round(ratio * 100)
   // These fields come directly from the search results — always available
@@ -170,18 +189,64 @@ function OfferCard({ offer, ratio, onAnalyze, isAnalyzing, analysis }) {
         </div>
       )}
 
-      {/* GitHub matches */}
-      {offer.github_matches?.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          {offer.github_matches.map((repo) => (
-            <span
-              key={repo}
-              className="text-xs px-2.5 py-0.5 rounded-full font-medium"
-              style={{ background: `${C.pointFort}18`, color: C.pointFort }}
-            >
-              {repo}
-            </span>
-          ))}
+      {/* Skill tags — matched always visible, missing appear after detail fetch */}
+      {(() => {
+        const matched = detail?.matched_skills ?? offer.matched_skills ?? []
+        const missing = detail?.missing_skills ?? []
+        if (matched.length === 0 && missing.length === 0) return null
+        return (
+          <div className="flex flex-wrap gap-1.5">
+            {matched.map((skill) => (
+              <span key={skill} className="text-xs px-2.5 py-1 rounded-full font-medium tracking-wide"
+                style={{ background: `${C.pointFort}1A`, color: C.pointFort }}>
+                {skill}
+              </span>
+            ))}
+            {missing.map((skill) => (
+              <span key={skill} className="text-xs px-2.5 py-1 rounded-full font-medium tracking-wide"
+                style={{ background: `${C.ecartFort}1A`, color: C.ecartFort }}>
+                {skill}
+              </span>
+            ))}
+          </div>
+        )
+      })()}
+
+      {/* Detail toggle */}
+      <button
+        onClick={handleToggleDetail}
+        className="text-xs text-gray-400 hover:text-gray-600 transition-colors text-left"
+      >
+        {showDetail ? '▲ Masquer le détail' : '▼ Voir le détail'}
+      </button>
+
+      {/* Detail panel */}
+      {showDetail && (
+        <div className="rounded-xl p-3 space-y-3 text-xs" style={{ background: C.creme }}>
+          {loadingDetail ? (
+            <p style={{ color: C.sarcelle }}>Chargement...</p>
+          ) : detail ? (
+            <>
+              <ul className="space-y-1 list-none">
+                {detail.summary.map((bullet, i) => (
+                  <li key={i} className="flex gap-2" style={{ color: C.ardoise }}>
+                    <span style={{ color: C.sarcelle }}>•</span>
+                    <span>{bullet}</span>
+                  </li>
+                ))}
+              </ul>
+              {detail.description && (
+                <details>
+                  <summary className="cursor-pointer text-gray-400 hover:text-gray-600">
+                    Description complète
+                  </summary>
+                  <p className="mt-2 whitespace-pre-wrap leading-relaxed" style={{ color: C.ardoise }}>
+                    {detail.description}
+                  </p>
+                </details>
+              )}
+            </>
+          ) : null}
         </div>
       )}
 
