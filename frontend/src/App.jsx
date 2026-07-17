@@ -1,34 +1,30 @@
 import { useState } from 'react'
-import Welcome from './components/Welcome'
 import Chat from './components/Chat'
 import CVImport from './components/CVImport'
-import CVPanel from './components/CVPanel'
 import CVPreview from './components/CVPreview'
 import JobSearch from './components/JobSearch'
 
 function App() {
-  const [screen, setScreen] = useState('welcome')
+  const [screen, setScreen] = useState('job_search')
   const [showCvPreview, setShowCvPreview] = useState(false)
+
+  if (screen === 'job_search') {
+    return (
+      <div className="h-screen bg-gray-100 overflow-hidden">
+        <JobSearch onNavigate={setScreen} />
+      </div>
+    )
+  }
 
   return (
     <div className="min-h-screen bg-gray-100 flex flex-col items-center justify-center p-4">
 
-      {screen !== 'welcome' && (
-        <button
-          onClick={() => setScreen('welcome')}
-          className="self-start mb-4 text-sm text-gray-500 hover:text-gray-700"
-        >
-          ← Accueil
-        </button>
-      )}
-
-      {screen === 'welcome' && (
-        <Welcome
-          onStart={() => setScreen('job_search')}
-          onImport={() => setScreen('cv_import')}
-          onBuild={() => setScreen('cv_builder')}
-        />
-      )}
+      <button
+        onClick={() => setScreen('job_search')}
+        className="self-start mb-4 text-sm text-gray-500 hover:text-gray-700"
+      >
+        ← Retour
+      </button>
 
       {screen === 'cv_builder' && (
         <div className="w-full max-w-2xl">
@@ -48,13 +44,6 @@ function App() {
 
       {screen === 'cv_import' && (
         <CVImport onSuccess={() => setScreen('job_search')} />
-      )}
-
-      {screen === 'job_search' && (
-        <div className="w-full flex flex-col items-center gap-4">
-          <CVPanel onShowPreview={() => setShowCvPreview(true)} />
-          <JobSearch />
-        </div>
       )}
 
       {showCvPreview && <CVPreview onClose={() => setShowCvPreview(false)} />}

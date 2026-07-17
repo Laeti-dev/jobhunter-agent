@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from utils.database import get_latest_cv
 from utils.france_travail import france_travail
-from utils.rag import cv_rag, analyze_offer
+from utils.rag import cv_rag, analyze_offer, score_offers
 
 router = APIRouter(prefix="/jobs")
 
@@ -14,6 +14,10 @@ class SearchRequest(BaseModel):
 
 class AnalyzeRequest(BaseModel):
     offer_id: str
+
+
+class ScoreRequest(BaseModel):
+    offers: list[dict]
 
 
 @router.get("/regions")
@@ -45,6 +49,14 @@ def search_offers(query: SearchRequest):
 def get_offer(offer_id: str):
     """Return the full details of a specific job offer."""
     return france_travail.get_offer(offer_id)
+
+
+@router.post("/score")
+def score_job_offers(request: ScoreRequest):
+    """Score and rank offers by semantic similarity against the stored CV and GitHub repos."""
+    if not request.offers:
+        return {"scored_offers": []}
+    return {"scored_offers": score_offers(request.offers)}
 
 
 @router.post("/analyze")

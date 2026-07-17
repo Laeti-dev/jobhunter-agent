@@ -1,6 +1,6 @@
 import { useState } from 'react'
 
-function CVImport({ onSuccess }) {
+function CVImport({ onSuccess, compact = false }) {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState(null)
 
@@ -31,6 +31,22 @@ function CVImport({ onSuccess }) {
     } finally {
       setIsLoading(false)
     }
+  }
+
+  if (compact) {
+    return (
+      <div className="space-y-1">
+        {isLoading ? (
+          <p className="text-xs text-gray-400">Analyse en cours...</p>
+        ) : (
+          <label className="cursor-pointer inline-block bg-blue-500 hover:bg-blue-600 text-white px-3 py-1.5 rounded-lg text-xs font-medium">
+            Importer un PDF
+            <input type="file" accept=".pdf" className="hidden" onChange={handleUpload} />
+          </label>
+        )}
+        {error && <p className="text-xs text-red-500">{error}</p>}
+      </div>
+    )
   }
 
   return (

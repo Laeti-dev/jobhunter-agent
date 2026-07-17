@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react'
+import CVImport from './CVImport'
+import CVPreview from './CVPreview'
 
 function extractGithubUsername(githubField) {
   if (!githubField) return null
@@ -7,25 +9,46 @@ function extractGithubUsername(githubField) {
   return match ? match[1] : githubField
 }
 
-function CVPanel({ onShowPreview }) {
+function CVPanel({ onNavigate }) {
   const [cv, setCv] = useState(null)
+  const [loaded, setLoaded] = useState(false)
+  const [showPreview, setShowPreview] = useState(false)
   const [indexedRepos, setIndexedRepos] = useState([])
   const [isIndexing, setIsIndexing] = useState(false)
   const [indexStatus, setIndexStatus] = useState(null)
 
-  useEffect(() => {
+  function fetchCV() {
     fetch('http://localhost:8000/cv/latest')
       .then((r) => r.json())
-      .then((data) => setCv(data.cv))
-      .catch(() => {})
+      .then((data) => { setCv(data.cv); setLoaded(true) })
+      .catch(() => setLoaded(true))
+  }
 
+  useEffect(() => {
+    fetchCV()
     fetch('http://localhost:8000/github/repos')
       .then((r) => r.json())
       .then((data) => setIndexedRepos(data.repos ?? []))
       .catch(() => {})
   }, [])
 
-  if (!cv) return null
+  if (!loaded) return null
+
+  if (!cv) {
+    return (
+      <div className="bg-white rounded-2xl p-4 space-y-3">
+        <p className="text-sm font-semibold text-gray-700">Mon CV</p>
+        <p className="text-xs text-gray-400">Aucun CV chargé.</p>
+        <CVImport onSuccess={fetchCV} compact />
+        <button
+          onClick={() => onNavigate?.('cv_builder')}
+          className="w-full text-xs text-blue-500 hover:underline"
+        >
+          Créer mon CV avec l'agent →
+        </button>
+      </div>
+    )
+  }
 
   const githubUsername = extractGithubUsername(cv.github)
 
@@ -50,7 +73,8 @@ function CVPanel({ onShowPreview }) {
   }
 
   return (
-    <div className="w-full max-w-2xl bg-white rounded-2xl shadow-sm p-4 space-y-3">
+    <div className="bg-white rounded-2xl shadow-sm p-4 space-y-3">
+      {showPreview && <CVPreview onClose={() => setShowPreview(false)} />}
       {/* CV summary */}
       <div className="flex justify-between items-start">
         <div>
@@ -65,7 +89,7 @@ function CVPanel({ onShowPreview }) {
           )}
         </div>
         <button
-          onClick={onShowPreview}
+          onClick={() => setShowPreview(true)}
           className="text-xs text-blue-500 hover:underline shrink-0 ml-4"
         >
           Voir CV complet
