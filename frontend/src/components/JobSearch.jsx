@@ -293,6 +293,26 @@ function ChatColumn({ onNavigate, onSearch }) {
   const [alternativeRoles, setAlternativeRoles] = useState([])
   const [loadingRoles, setLoadingRoles] = useState(false)
   const [awaitingCustomRole, setAwaitingCustomRole] = useState(false)
+  const [showContratPicker, setShowContratPicker] = useState(false)
+  const [showExperiencePicker, setShowExperiencePicker] = useState(false)
+  const [selectedRole, setSelectedRole] = useState('')
+  const [selectedContrat, setSelectedContrat] = useState(null)
+  const [suggestedExperience, setSuggestedExperience] = useState(null)
+
+  const CONTRAT_OPTIONS = [
+    { label: 'CDI', value: 'CDI' },
+    { label: 'CDD', value: 'CDD' },
+    { label: 'Alternance', value: 'ALTERNANCE' },
+    { label: 'Stage', value: 'STAGE' },
+    { label: 'Peu importe', value: null },
+  ]
+
+  const EXPERIENCE_OPTIONS = [
+    { label: 'Débutant · ≤ 1 an', value: '1' },
+    { label: 'Junior · 1-3 ans', value: '2' },
+    { label: 'Confirmé · 3+ ans', value: '3' },
+    { label: 'Peu importe', value: null },
+  ]
   const [uploadingCv, setUploadingCv] = useState(false)
   const bottomRef = useRef(null)
   const fileRef = useRef(null)
@@ -305,6 +325,10 @@ function ChatColumn({ onNavigate, onSearch }) {
           const firstName = data.cv.name?.split(' ')[0] ?? 'vous'
           const role = data.cv.target_role ?? ''
           setSuggestedRole(role)
+          // Infer experience level from number of work experiences in CV
+          const nExp = data.cv.experiences?.length ?? 0
+          const expLevel = nExp === 0 ? '1' : nExp <= 2 ? '2' : '3'
+          setSuggestedExperience(expLevel)
           setMessages([
             {
               role: 'assistant',
@@ -327,16 +351,43 @@ function ChatColumn({ onNavigate, onSearch }) {
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, isLoading, showCvActions, showSearchConfirm, showRolePicker, loadingRoles])
+  }, [messages, isLoading, showCvActions, showSearchConfirm, showRolePicker, loadingRoles, showContratPicker, showExperiencePicker])
 
   function confirmSearch(role) {
     setShowSearchConfirm(false)
+    setSelectedRole(role)
     setMessages((prev) => [
       ...prev,
       { role: 'user', content: `Oui, rechercher "${role}"` },
-      { role: 'assistant', content: `Lancement de la recherche pour **${role}**...` },
+      { role: 'assistant', content: 'Quel type de contrat recherchez-vous ?' },
     ])
-    onSearch?.(role)
+    setShowContratPicker(true)
+  }
+
+  function selectContrat(contrat) {
+    setShowContratPicker(false)
+    setSelectedContrat(contrat)
+    const contratLabel = CONTRAT_OPTIONS.find(o => o.value === contrat)?.label ?? 'Peu importe'
+    const expOption = EXPERIENCE_OPTIONS.find(o => o.value === suggestedExperience)
+    const expLabel = expOption?.label ?? 'Débutant · ≤ 1 an'
+    setMessages((prev) => [
+      ...prev,
+      { role: 'user', content: contratLabel },
+      { role: 'assistant', content: `D'après votre CV, je vous suggère : **${expLabel}**. Vous confirmez ?` },
+    ])
+    setShowExperiencePicker(true)
+  }
+
+  function selectExperience(experience) {
+    setShowExperiencePicker(false)
+    const expLabel = EXPERIENCE_OPTIONS.find(o => o.value === experience)?.label ?? 'Peu importe'
+    const contratLabel = CONTRAT_OPTIONS.find(o => o.value === selectedContrat)?.label ?? 'Peu importe'
+    setMessages((prev) => [
+      ...prev,
+      { role: 'user', content: expLabel },
+      { role: 'assistant', content: `Lancement de la recherche — **${selectedRole}** · ${contratLabel} · ${expLabel}` },
+    ])
+    onSearch?.(selectedRole, selectedContrat, experience)
   }
 
   async function requestCustomRole() {
@@ -369,12 +420,13 @@ function ChatColumn({ onNavigate, onSearch }) {
   function pickRole(role) {
     setShowRolePicker(false)
     setSuggestedRole(role)
+    setSelectedRole(role)
     setMessages((prev) => [
       ...prev,
       { role: 'user', content: role },
-      { role: 'assistant', content: `Lancement de la recherche pour **${role}**...` },
+      { role: 'assistant', content: 'Quel type de contrat recherchez-vous ?' },
     ])
-    onSearch?.(role)
+    setShowContratPicker(true)
   }
 
   function openFreeInput() {
@@ -423,12 +475,13 @@ function ChatColumn({ onNavigate, onSearch }) {
     if (awaitingCustomRole) {
       setAwaitingCustomRole(false)
       setSuggestedRole(text)
+      setSelectedRole(text)
       setMessages((prev) => [
         ...prev,
         { role: 'user', content: text },
-        { role: 'assistant', content: `Lancement de la recherche pour **${text}**...` },
+        { role: 'assistant', content: 'Quel type de contrat recherchez-vous ?' },
       ])
-      onSearch?.(text)
+      setShowContratPicker(true)
       return
     }
 
@@ -525,6 +578,40 @@ function ChatColumn({ onNavigate, onSearch }) {
           </div>
         )}
 
+        {/* Contract type picker */}
+        {showContratPicker && (
+          <div className="flex flex-col gap-2 pl-1 pt-1">
+            {CONTRAT_OPTIONS.map(({ label, value }) => (
+              <button
+                key={label}
+                onClick={() => selectContrat(value)}
+                className="text-left text-xs font-medium px-3 py-2 rounded-lg border transition-colors hover:opacity-90"
+                style={{ borderColor: C.sarcelle, color: C.sarcelle }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Experience level picker */}
+        {showExperiencePicker && (
+          <div className="flex flex-col gap-2 pl-1 pt-1">
+            {EXPERIENCE_OPTIONS.map(({ label, value }) => (
+              <button
+                key={label}
+                onClick={() => selectExperience(value)}
+                className="text-left text-xs font-medium px-3 py-2 rounded-lg border transition-colors"
+                style={value === suggestedExperience
+                  ? { background: C.sarcelle, color: 'white', borderColor: C.sarcelle }
+                  : { borderColor: C.sarcelle, color: C.sarcelle }}
+              >
+                {label}{value === suggestedExperience ? ' ✓' : ''}
+              </button>
+            ))}
+          </div>
+        )}
+
         {/* CV action buttons */}
         {showCvActions && (
           <div className="flex flex-col gap-2 pl-1 pt-1">
@@ -599,7 +686,7 @@ function JobSearch({ onNavigate }) {
       .catch(() => {})
   }, [])
 
-  async function runSearch(kw, reg) {
+  async function runSearch(kw, reg, typeContrat = null, experience = null) {
     setIsSearching(true)
     setOffers([])
     setAnalyses({})
@@ -608,7 +695,7 @@ function JobSearch({ onNavigate }) {
       const res = await fetch('http://localhost:8000/jobs/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ keywords: kw, region: reg }),
+        body: JSON.stringify({ keywords: kw, region: reg, type_contrat: typeContrat, experience }),
       })
       const data = await res.json()
       const raw = data.offers ?? []
@@ -708,7 +795,7 @@ function JobSearch({ onNavigate }) {
         {/* Right: chat */}
         <ChatColumn
           onNavigate={onNavigate}
-          onSearch={(kw) => { setKeywords(kw); runSearch(kw, region) }}
+          onSearch={(kw, typeContrat, experience) => { setKeywords(kw); runSearch(kw, region, typeContrat, experience) }}
         />
       </div>
     </div>

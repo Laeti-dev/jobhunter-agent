@@ -76,7 +76,8 @@ class FranceTravailClient:
         mots_cles: str,
         region: str = DEFAULT_REGION,
         experience: str | None = None,
-        niveau_formation: str | None = None,
+        type_contrat: str | None = None,
+        alternance: bool = False,
         max_results: int = 10,
     ) -> list[dict]:
         """Search for job offers in a region (INSEE 2-digit code, default: Île-de-France)."""
@@ -87,8 +88,10 @@ class FranceTravailClient:
         }
         if experience:
             params["experience"] = experience
-        if niveau_formation:
-            params["niveauFormation"] = niveau_formation
+        if type_contrat:
+            params["typeContrat"] = type_contrat
+        if alternance:
+            params["alternance"] = "true"
 
         response = httpx.get(
             f"{API_BASE}/offres/search",

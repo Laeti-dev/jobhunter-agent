@@ -10,6 +10,8 @@ router = APIRouter(prefix="/jobs")
 class SearchRequest(BaseModel):
     keywords: str
     region: str = "11"
+    type_contrat: str | None = None   # CDI, CDD, STAGE — None = toutes
+    experience: str | None = None     # "1" débutant, "2" junior, "3" confirmé — None = toutes
 
 
 class AnalyzeRequest(BaseModel):
@@ -37,10 +39,20 @@ def suggest_params():
 
 @router.post("/search")
 def search_offers(query: SearchRequest):
-    """Search for job offers by job title and region."""
+    """Search for job offers by job title, region, contract type, and experience level."""
+    alternance = query.type_contrat == "ALTERNANCE"
+    type_contrat = query.type_contrat if not alternance else None
+    mots_cles = query.keywords
+    if query.type_contrat == "STAGE":
+        mots_cles = f"{mots_cles} stage"
+        type_contrat = "CDD"
+
     offers = france_travail.search_offers(
-        mots_cles=query.keywords,
+        mots_cles=mots_cles,
         region=query.region,
+        experience=query.experience,
+        type_contrat=type_contrat,
+        alternance=alternance,
     )
     return {"offers": offers, "total": len(offers)}
 
