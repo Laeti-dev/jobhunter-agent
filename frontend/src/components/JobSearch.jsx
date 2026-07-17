@@ -217,11 +217,14 @@ function OfferCard({ offer, ratio, onAnalyze, isAnalyzing, analysis }) {
 }
 
 // ── Right chat column ─────────────────────────────────────────
-function ChatColumn({ onNavigate }) {
+function ChatColumn({ onNavigate, onSearch }) {
   const [messages, setMessages] = useState([])
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [showCvActions, setShowCvActions] = useState(false)
+  const [showSearchConfirm, setShowSearchConfirm] = useState(false)
+  const [suggestedRole, setSuggestedRole] = useState('')
+  const [awaitingCustomRole, setAwaitingCustomRole] = useState(false)
   const [uploadingCv, setUploadingCv] = useState(false)
   const bottomRef = useRef(null)
   const fileRef = useRef(null)
@@ -232,11 +235,15 @@ function ChatColumn({ onNavigate }) {
       .then((data) => {
         if (data.cv) {
           const firstName = data.cv.name?.split(' ')[0] ?? 'vous'
-          const role = data.cv.target_role
-          setMessages([{
-            role: 'assistant',
-            content: `Bonjour **${firstName}** !\n\nVotre CV est chargé${role ? ` — vous postulez en tant que **${role}**` : ''}.\n\nLancez une recherche pour découvrir les offres qui vous correspondent. Je suis là pour vous aider à les analyser et préparer vos candidatures.`,
-          }])
+          const role = data.cv.target_role ?? ''
+          setSuggestedRole(role)
+          setMessages([
+            {
+              role: 'assistant',
+              content: `Bonjour **${firstName}** ! Votre CV est chargé.\n\nJe vous propose de rechercher des offres pour le poste **${role || 'de votre choix'}**. C'est bien ça ?`,
+            },
+          ])
+          setShowSearchConfirm(true)
         } else {
           setMessages([{
             role: 'assistant',
@@ -252,7 +259,27 @@ function ChatColumn({ onNavigate }) {
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, isLoading, showCvActions])
+  }, [messages, isLoading, showCvActions, showSearchConfirm])
+
+  function confirmSearch(role) {
+    setShowSearchConfirm(false)
+    setMessages((prev) => [
+      ...prev,
+      { role: 'user', content: `Oui, rechercher "${role}"` },
+      { role: 'assistant', content: `Lancement de la recherche pour **${role}**...` },
+    ])
+    onSearch?.(role)
+  }
+
+  function requestCustomRole() {
+    setShowSearchConfirm(false)
+    setAwaitingCustomRole(true)
+    setMessages((prev) => [
+      ...prev,
+      { role: 'user', content: 'Je cherche un autre poste' },
+      { role: 'assistant', content: 'Quel poste recherchez-vous ?' },
+    ])
+  }
 
   async function handleCvUpload(e) {
     const file = e.target.files[0]
@@ -266,11 +293,13 @@ function ChatColumn({ onNavigate }) {
       const res = await fetch('http://localhost:8000/cv/import', { method: 'POST', body: form })
       const data = await res.json()
       const name = data.cv?.name?.split(' ')[0] ?? 'vous'
-      const role = data.cv?.target_role
+      const role = data.cv?.target_role ?? ''
+      setSuggestedRole(role)
       setMessages((prev) => [...prev, {
         role: 'assistant',
-        content: `CV importé avec succès ! Bonjour **${name}**${role ? ` — je vous vois comme **${role}**` : ''}.\n\nLancez maintenant une recherche pour trouver vos offres.`,
+        content: `CV importé ! Bonjour **${name}**.\n\nJe vous propose de rechercher **${role || 'un poste'}**. C'est bien ça ?`,
       }])
+      setShowSearchConfirm(true)
     } catch {
       setMessages((prev) => [...prev, { role: 'assistant', content: "Erreur lors de l'import. Vérifiez que le fichier est bien un PDF." }])
       setShowCvActions(true)
@@ -282,16 +311,31 @@ function ChatColumn({ onNavigate }) {
 
   async function sendMessage() {
     if (!input.trim() || isLoading) return
-    const userMsg = { role: 'user', content: input }
+    const text = input.trim()
+    setInput('')
+
+    // Intercept: user is providing a custom role
+    if (awaitingCustomRole) {
+      setAwaitingCustomRole(false)
+      setSuggestedRole(text)
+      setMessages((prev) => [
+        ...prev,
+        { role: 'user', content: text },
+        { role: 'assistant', content: `Lancement de la recherche pour **${text}**...` },
+      ])
+      onSearch?.(text)
+      return
+    }
+
+    const userMsg = { role: 'user', content: text }
     const updated = [...messages, userMsg]
     setMessages(updated)
-    setInput('')
     setIsLoading(true)
     try {
       const res = await fetch('http://localhost:8000/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: input, history: messages }),
+        body: JSON.stringify({ message: text, history: messages }),
       })
       const data = await res.json()
       setMessages([...updated, { role: 'assistant', content: data.response }])
@@ -328,7 +372,26 @@ function ChatColumn({ onNavigate }) {
           </div>
         ))}
 
-        {/* CV action buttons — shown only when no CV on arrival */}
+        {/* Search confirmation buttons */}
+        {showSearchConfirm && (
+          <div className="flex flex-col gap-2 pl-1 pt-1">
+            <button
+              onClick={() => confirmSearch(suggestedRole)}
+              className="text-left text-xs font-medium px-3 py-2 rounded-lg text-white transition-opacity hover:opacity-90"
+              style={{ background: C.sarcelle }}
+            >
+              ✓ Oui, lancer la recherche
+            </button>
+            <button
+              onClick={requestCustomRole}
+              className="text-left text-xs font-medium px-3 py-2 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50"
+            >
+              ✏️ Non, autre poste
+            </button>
+          </div>
+        )}
+
+        {/* CV action buttons */}
         {showCvActions && (
           <div className="flex flex-col gap-2 pl-1 pt-1">
             <input ref={fileRef} type="file" accept=".pdf" className="hidden" onChange={handleCvUpload} />
@@ -365,7 +428,7 @@ function ChatColumn({ onNavigate }) {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="Votre question..."
+          placeholder={awaitingCustomRole ? 'Entrez le poste souhaité...' : 'Votre question...'}
         />
         <button
           onClick={sendMessage}
@@ -402,8 +465,7 @@ function JobSearch({ onNavigate }) {
       .catch(() => {})
   }, [])
 
-  async function handleSearch(e) {
-    e.preventDefault()
+  async function runSearch(kw, reg) {
     setIsSearching(true)
     setOffers([])
     setAnalyses({})
@@ -412,7 +474,7 @@ function JobSearch({ onNavigate }) {
       const res = await fetch('http://localhost:8000/jobs/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ keywords, region }),
+        body: JSON.stringify({ keywords: kw, region: reg }),
       })
       const data = await res.json()
       const raw = data.offers ?? []
@@ -432,6 +494,11 @@ function JobSearch({ onNavigate }) {
       setIsSearching(false)
       setIsScoring(false)
     }
+  }
+
+  function handleSearch(e) {
+    e.preventDefault()
+    runSearch(keywords, region)
   }
 
   async function handleAnalyze(offerId) {
@@ -505,7 +572,10 @@ function JobSearch({ onNavigate }) {
         </div>
 
         {/* Right: chat */}
-        <ChatColumn onNavigate={onNavigate} />
+        <ChatColumn
+          onNavigate={onNavigate}
+          onSearch={(kw) => { setKeywords(kw); runSearch(kw, region) }}
+        />
       </div>
     </div>
   )
