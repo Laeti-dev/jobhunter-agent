@@ -217,15 +217,68 @@ function OfferCard({ offer, ratio, onAnalyze, isAnalyzing, analysis }) {
 }
 
 // ── Right chat column ─────────────────────────────────────────
-function ChatColumn() {
+function ChatColumn({ onNavigate }) {
   const [messages, setMessages] = useState([])
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
+  const [showCvActions, setShowCvActions] = useState(false)
+  const [uploadingCv, setUploadingCv] = useState(false)
   const bottomRef = useRef(null)
+  const fileRef = useRef(null)
+
+  useEffect(() => {
+    fetch('http://localhost:8000/cv/latest')
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.cv) {
+          const firstName = data.cv.name?.split(' ')[0] ?? 'vous'
+          const role = data.cv.target_role
+          setMessages([{
+            role: 'assistant',
+            content: `Bonjour **${firstName}** !\n\nVotre CV est chargé${role ? ` — vous postulez en tant que **${role}**` : ''}.\n\nLancez une recherche pour découvrir les offres qui vous correspondent. Je suis là pour vous aider à les analyser et préparer vos candidatures.`,
+          }])
+        } else {
+          setMessages([{
+            role: 'assistant',
+            content: `Bonjour ! Pour commencer, j'ai besoin de votre CV.\n\nVous pouvez charger un PDF existant, ou créer votre CV avec moi étape par étape.`,
+          }])
+          setShowCvActions(true)
+        }
+      })
+      .catch(() => {
+        setMessages([{ role: 'assistant', content: 'Bonjour ! Comment puis-je vous aider ?' }])
+      })
+  }, [])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, isLoading])
+  }, [messages, isLoading, showCvActions])
+
+  async function handleCvUpload(e) {
+    const file = e.target.files[0]
+    if (!file) return
+    setUploadingCv(true)
+    setShowCvActions(false)
+    setMessages((prev) => [...prev, { role: 'user', content: `📎 ${file.name}` }])
+    const form = new FormData()
+    form.append('file', file)
+    try {
+      const res = await fetch('http://localhost:8000/cv/import', { method: 'POST', body: form })
+      const data = await res.json()
+      const name = data.cv?.name?.split(' ')[0] ?? 'vous'
+      const role = data.cv?.target_role
+      setMessages((prev) => [...prev, {
+        role: 'assistant',
+        content: `CV importé avec succès ! Bonjour **${name}**${role ? ` — je vous vois comme **${role}**` : ''}.\n\nLancez maintenant une recherche pour trouver vos offres.`,
+      }])
+    } catch {
+      setMessages((prev) => [...prev, { role: 'assistant', content: "Erreur lors de l'import. Vérifiez que le fichier est bien un PDF." }])
+      setShowCvActions(true)
+    } finally {
+      setUploadingCv(false)
+      e.target.value = ''
+    }
+  }
 
   async function sendMessage() {
     if (!input.trim() || isLoading) return
@@ -258,16 +311,12 @@ function ChatColumn() {
       <div className="px-4 py-3 border-b border-gray-100">
         <p className="text-sm font-semibold" style={{ color: C.ardoise }}>Assistant IA</p>
       </div>
+
       <div className="flex-1 overflow-y-auto px-3 py-3 space-y-2">
-        {messages.length === 0 && (
-          <p className="text-xs text-gray-400 text-center mt-8">
-            Posez une question sur vos recherches ou votre candidature.
-          </p>
-        )}
         {messages.map((msg, i) => (
           <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
             <div
-              className={`max-w-[85%] px-3 py-2 rounded-xl text-xs prose prose-xs`}
+              className="max-w-[85%] px-3 py-2 rounded-xl text-xs prose prose-xs"
               style={msg.role === 'user'
                 ? { background: C.sarcelle, color: 'white' }
                 : { background: C.creme, color: C.ardoise }}
@@ -278,6 +327,28 @@ function ChatColumn() {
             </div>
           </div>
         ))}
+
+        {/* CV action buttons — shown only when no CV on arrival */}
+        {showCvActions && (
+          <div className="flex flex-col gap-2 pl-1 pt-1">
+            <input ref={fileRef} type="file" accept=".pdf" className="hidden" onChange={handleCvUpload} />
+            <button
+              onClick={() => fileRef.current?.click()}
+              disabled={uploadingCv}
+              className="text-left text-xs font-medium px-3 py-2 rounded-lg border transition-colors"
+              style={{ borderColor: C.sarcelle, color: C.sarcelle }}
+            >
+              📎 {uploadingCv ? 'Import en cours...' : 'Charger un PDF'}
+            </button>
+            <button
+              onClick={() => onNavigate?.('cv_builder')}
+              className="text-left text-xs font-medium px-3 py-2 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50"
+            >
+              ✏️ Créer depuis zéro
+            </button>
+          </div>
+        )}
+
         {isLoading && (
           <div className="flex justify-start">
             <div className="px-3 py-2 rounded-xl text-xs" style={{ background: C.creme, color: C.ardoise }}>
@@ -287,6 +358,7 @@ function ChatColumn() {
         )}
         <div ref={bottomRef} />
       </div>
+
       <div className="p-3 border-t border-gray-100 flex gap-2">
         <input
           className="flex-1 border border-gray-200 rounded-lg px-3 py-1.5 text-xs focus:outline-none"
@@ -309,7 +381,7 @@ function ChatColumn() {
 }
 
 // ── Main component ────────────────────────────────────────────
-function JobSearch() {
+function JobSearch({ onNavigate }) {
   const [keywords, setKeywords] = useState('')
   const [region, setRegion] = useState('11')
   const [regions, setRegions] = useState([])
@@ -433,7 +505,7 @@ function JobSearch() {
         </div>
 
         {/* Right: chat */}
-        <ChatColumn />
+        <ChatColumn onNavigate={onNavigate} />
       </div>
     </div>
   )
