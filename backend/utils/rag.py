@@ -184,3 +184,65 @@ def analyze_offer(
 
     response = completion(model=model, messages=messages, temperature=0.3)
     return response.choices[0].message.content
+
+def score_offers(offers: list[dict]) -> list[dict]:
+    """
+    Score each offer against the CV and GitHub repos using embedding similarity.
+    Returns the offers sorted by relevance, each enriched with 'score' and 'github_matches'.
+    """
+    offer_texts = [
+        f"{offer.get('intitule', '')} {offer.get('description', '')[:1000]}"
+        for offer in offers
+    ]
+    offer_embeddings = _embedding_model.encode(offer_texts).tolist()
+
+    if cv_rag._collection is None:
+        cv_rag._collection = cv_rag.client.get_or_create_collection(COLLECTION_NAME)
+    if github_rag._collection is None:
+        github_rag._collection = github_rag.client.get_or_create_collection(GITHUB_COLLECTION_NAME)
+
+    cv_results = cv_rag._collection.query(
+        query_embeddings=offer_embeddings,
+        n_results=3,
+        include=["distances", "metadatas"],
+    )
+
+    github_count = github_rag._collection.count()
+    github_results = None
+    if github_count > 0:
+        github_results = github_rag._collection.query(
+            query_embeddings=offer_embeddings,
+            n_results=min(3, github_count),
+            include=["distances", "metadatas"],
+        )
+
+    scored = []
+    for i, offer in enumerate(offers):
+        # CV score
+        cv_distances = cv_results["distances"][i]
+        avg_cv = sum(cv_distances) / len(cv_distances)
+        score_cv = 1 / (1 + avg_cv)
+
+        # GitHub score + matches
+        score_github = 0.0
+        github_matches = []
+        if github_results:
+            gh_distances = github_results["distances"][i]
+            gh_metadatas = github_results["metadatas"][i]
+            avg_gh = sum(gh_distances) / len(gh_distances)
+            score_github = 1 / (1 + avg_gh)
+            # Keep only repos closer than average (the genuinely relevant ones)
+            github_matches = [
+                gh_metadatas[j]["repo"]
+                for j in range(len(gh_distances))
+                if gh_distances[j] < avg_gh
+            ]
+
+        scored.append({
+            **offer,
+            "score": round(0.6 * score_cv + 0.4 * score_github, 4),
+            "github_matches": github_matches,
+        })
+
+    scored.sort(key=lambda x: x["score"], reverse=True)
+    return scored
