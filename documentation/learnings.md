@@ -864,3 +864,178 @@ metric = FaithfulnessMetric(threshold=0.7, model=OllamaJudge(), verbose_mode=Tru
 ```
 
 This is essential for debugging a failing quality test: instead of just seeing `score=0.4`, you see *which* claim in the output the judge flagged as unsupported by the retrieved context.
+
+---
+
+## Phase 4a — Cover Letter Multi-Agent Pipeline
+
+### HITL (Human-in-the-loop) — multi-step chat confirmation
+
+HITL is a design pattern where the system **pauses execution and asks the user to confirm or redirect** before continuing. The key idea is that some decisions should not be made autonomously by the agent — the user needs to be in control of them.
+
+In this project, HITL controls the job search parameters through a chain of confirmation steps:
+
+```
+User types a role
+    ↓
+Bot asks: "Search for X?" → [✓ Yes] [✏️ Other]
+    ↓ (if "Other")
+LLM proposes 3 alternative roles + [✏️ Other...]
+    ↓
+Bot asks: "Which contract type?" → [CDI] [CDD] [Alternance] [Stage] [Any]
+    ↓
+Bot asks: "Experience level?" → [Beginner ≤1y] [Junior 1-3y] [Confirmed 3+y] [Any]
+    ↓
+Search is triggered with all 4 confirmed parameters
+```
+
+On the frontend, this is implemented as a **state machine** inside the chat component:
+
+```jsx
+const [chatState, setChatState] = useState("idle")
+// possible values: "showSearchConfirm" | "showRolePicker" | "awaitingCustomRole"
+//                  "showContratPicker" | "showExperiencePicker"
+```
+
+Each state renders a different set of quick-reply buttons. The user's click triggers the next state and eventually calls the search function with the confirmed parameters.
+
+**Why not ask everything at once?** Progressive disclosure reduces cognitive load. Asking one question at a time is also closer to how a real recruiter conversation works — the user commits to each decision before seeing the next one.
+
+---
+
+### Multi-source RAG — indexing two knowledge bases in parallel
+
+So far, the RAG pipeline only had one source: the CV. Phase 4a adds a second source: **GitHub repositories**, indexed separately from the CV.
+
+```
+cv_rag       → ChromaDB collection "cv_index"
+github_rag   → ChromaDB collection "github_index"
+```
+
+Both use the same embedding model (`paraphrase-multilingual-MiniLM-L12-v2`), but they index different content:
+
+```python
+# cv_rag: chunks from the structured CVProfile (experiences, skills, summary…)
+cv_rag.index_cv(cv_profile)
+
+# github_rag: one chunk per GitHub repository (name + description + languages + topics)
+github_rag.index_repos(list_of_repos)
+```
+
+At retrieval time, the two sources are queried **independently** with the same query text (the job offer). Each retrieval returns the chunks most relevant to the offer from its own domain:
+
+```python
+cv_matches      = cv_rag.retrieve(query)       # best-matching CV sections
+github_matches  = github_rag.retrieve(query)   # best-matching GitHub repos
+```
+
+The two result sets are then passed separately to the LLM, which can draw on both sources without mixing them up.
+
+**Why two separate collections and not one merged index?**
+Keeping the sources separate allows the LLM to reason about them differently ("based on my experience…" vs "as shown by this project…"). It also makes it easy to add or update one source without rebuilding the other.
+
+---
+
+### LangGraph fan-out / fan-in — running nodes in parallel
+
+**Fan-out** means a single node (or START) triggers **multiple nodes simultaneously** — they run in parallel.  
+**Fan-in** means multiple parallel nodes all converge into a **single downstream node** that runs once both are done.
+
+```
+START
+  ├──→ analyze_cv_matches     ─┐
+  └──→ analyze_gh_matches     ─┴──→ assemble_cover_letter → END
+```
+
+The naïve implementation seems obvious — just add two edges:
+
+```python
+builder.add_edge(START, "analyze_cv_matches")
+builder.add_edge(START, "analyze_gh_matches")
+builder.add_edge("analyze_cv_matches", "assemble_cover_letter")
+builder.add_edge("analyze_gh_matches", "assemble_cover_letter")
+```
+
+But this breaks in practice: LangGraph does **not** automatically wait for both parallel branches before triggering `assemble_cover_letter`. One branch completes, satisfies one edge, and the fan-in node fires — before the other branch has written its result to the state.
+
+Symptom:
+```python
+result.keys()
+# → ['offer', 'cv_matches', 'github_matches']   ← cover_letter is absent
+# assemble_cover_letter never ran, or ran with an empty github_matches
+```
+
+---
+
+### The fix — `Annotated` reducers + `Send` API
+
+Two changes are needed, working together:
+
+**1. `Annotated` reducers in the state**
+
+`Annotated[list, operator.add]` tells LangGraph: "this channel supports concurrent writes — accumulate them instead of overwriting."
+
+```python
+from typing import Annotated, TypedDict
+import operator
+
+class CoverLetterState(TypedDict):
+    offer: dict
+    cv_matches: Annotated[list, operator.add]      # reducer: merge results from parallel branches
+    github_matches: Annotated[list, operator.add]  # reducer: merge results from parallel branches
+    cover_letter: str
+```
+
+Without this, LangGraph's default channel behaviour is "last write wins" (`LastValue`) — if two branches try to write around the same time, one update silently overwrites the other.
+
+**2. Explicit fan-out with the `Send` API**
+
+`Send` schedules a node explicitly with a copy of the current state, making the parallel dispatch unambiguous to LangGraph's scheduler:
+
+```python
+from langgraph.types import Send
+
+def dispatch_rag_agents(state: CoverLetterState) -> list[Send]:
+    return [
+        Send("analyze_cv_matches", state),
+        Send("analyze_gh_matches", state),
+    ]
+
+builder.add_conditional_edges(START, dispatch_rag_agents, ["analyze_cv_matches", "analyze_gh_matches"])
+builder.add_edge("analyze_cv_matches", "assemble_cover_letter")
+builder.add_edge("analyze_gh_matches", "assemble_cover_letter")
+```
+
+`add_conditional_edges` here is not used for a condition — the dispatcher always returns both `Send` objects. It is used because `Send` objects can only be returned from conditional edges, not plain `add_edge`.
+
+**Why both changes are necessary together:**
+
+| | `Annotated` reducers only | `Send` only | Both |
+|---|---|---|---|
+| Parallel nodes scheduled correctly | ✗ | ✓ | ✓ |
+| State merged correctly before fan-in | ✓ | ✗ | ✓ |
+| Fan-in node fires with complete state | ✗ | ✗ | ✓ |
+
+The `Annotated` reducer defines *how* to merge state; the `Send` API defines *when* to schedule the nodes. Both are needed for a correct fan-in.
+
+---
+
+### `add_conditional_edges` for fan-out, not just routing
+
+`add_conditional_edges` is usually taught as a tool for branching: "run this function, and depending on what it returns, go to node A or node B." But it has a second use: **returning a list of `Send` objects** to fan-out to multiple nodes at once.
+
+```python
+# Typical use — routing:
+def route(state) -> str:
+    return "node_a" if condition else "node_b"
+
+builder.add_conditional_edges("some_node", route)
+
+# Fan-out use — parallel dispatch:
+def dispatch(state) -> list[Send]:
+    return [Send("node_a", state), Send("node_b", state)]
+
+builder.add_conditional_edges(START, dispatch, ["node_a", "node_b"])
+```
+
+The third argument (`["node_a", "node_b"]`) is the list of possible target nodes — LangGraph uses it to validate the graph at compile time.

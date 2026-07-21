@@ -100,11 +100,37 @@ function TopBar({ keywords, setKeywords, region, setRegion, regions, isSearching
 }
 
 // ── Offer card ────────────────────────────────────────────────
-function OfferCard({ offer, ratio, onAnalyze, isAnalyzing, analysis }) {
+function OfferCard({ offer, ratio, onAnalyze, isAnalyzing, analysis, onLetterGenerated }) {
   const [showLocation, setShowLocation] = useState(false)
   const [showDetail, setShowDetail] = useState(false)
   const [detail, setDetail] = useState(null)
   const [loadingDetail, setLoadingDetail] = useState(false)
+  const [generatingLetter, setGeneratingLetter] = useState(false)
+
+  async function handleGenerateLetter() {
+    setGeneratingLetter(true)
+    try {
+      let summary = detail?.summary
+      if (!summary) {
+        const enrichRes = await fetch(`http://localhost:8000/jobs/${offer.id}/enrich`)
+        const enrichData = await enrichRes.json()
+        setDetail(enrichData)
+        summary = enrichData.summary
+      }
+      const res = await fetch('http://localhost:8000/cover/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ intitule: offer.intitule, summary }),
+      })
+      const data = await res.json()
+      console.log('cover response:', data)
+      onLetterGenerated?.(offer.intitule, data.cover_letter)
+    } catch {
+      onLetterGenerated?.(offer.intitule, "Erreur lors de la génération.")
+    } finally {
+      setGeneratingLetter(false)
+    }
+  }
 
   async function handleToggleDetail() {
     if (showDetail) { setShowDetail(false); return }
@@ -253,10 +279,12 @@ function OfferCard({ offer, ratio, onAnalyze, isAnalyzing, analysis }) {
       {/* Actions */}
       <div className="flex gap-2 pt-1">
         <button
-          className="text-white text-xs font-medium px-4 py-2 rounded-lg transition-opacity hover:opacity-90"
+          onClick={handleGenerateLetter}
+          disabled={generatingLetter}
+          className="text-white text-xs font-medium px-4 py-2 rounded-lg transition-opacity hover:opacity-90 disabled:opacity-50"
           style={{ background: C.terreCuite }}
         >
-          Générer la lettre
+          {generatingLetter ? 'Génération...' : 'Générer la lettre'}
         </button>
         <button
           onClick={onAnalyze}
@@ -281,8 +309,40 @@ function OfferCard({ offer, ratio, onAnalyze, isAnalyzing, analysis }) {
   )
 }
 
+// ── Cover letter bubble in chat ───────────────────────────────
+function CoverLetterMessage({ letter, intitule }) {
+  const [copied, setCopied] = useState(false)
+
+  function handleCopy() {
+    navigator.clipboard.writeText(letter)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
+  return (
+    <div className="w-full rounded-xl p-3 space-y-2" style={{ background: C.creme }}>
+      <div className="flex justify-between items-center">
+        <p className="text-xs font-semibold" style={{ color: C.ardoise }}>
+          Proposition de lettre
+        </p>
+        <button
+          onClick={handleCopy}
+          className="text-xs px-2.5 py-1 rounded-lg font-medium text-white transition-colors"
+          style={{ background: copied ? C.pointFort : C.sarcelle }}
+        >
+          {copied ? 'Copié ✓' : 'Copier'}
+        </button>
+      </div>
+      <p className="text-xs whitespace-pre-wrap leading-relaxed max-h-64 overflow-y-auto"
+        style={{ color: C.ardoise }}>
+        {letter}
+      </p>
+    </div>
+  )
+}
+
 // ── Right chat column ─────────────────────────────────────────
-function ChatColumn({ onNavigate, onSearch }) {
+function ChatColumn({ onNavigate, onSearch, generatedLetter }) {
   const [messages, setMessages] = useState([])
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
@@ -348,6 +408,20 @@ function ChatColumn({ onNavigate, onSearch }) {
         setMessages([{ role: 'assistant', content: 'Bonjour ! Comment puis-je vous aider ?' }])
       })
   }, [])
+
+  useEffect(() => {
+    if (!generatedLetter) return
+    const { intitule, letter } = generatedLetter
+    setMessages((prev) => [
+      ...prev,
+      {
+        role: 'assistant',
+        content: `**Proposition de lettre — ${intitule}**\n\n${letter}`,
+        type: 'cover_letter',
+        letterText: letter,
+      },
+    ])
+  }, [generatedLetter])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -517,16 +591,20 @@ function ChatColumn({ onNavigate, onSearch }) {
       <div className="flex-1 overflow-y-auto px-3 py-3 space-y-2">
         {messages.map((msg, i) => (
           <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-            <div
-              className="max-w-[85%] px-3 py-2 rounded-xl text-xs prose prose-xs"
-              style={msg.role === 'user'
-                ? { background: C.sarcelle, color: 'white' }
-                : { background: C.creme, color: C.ardoise }}
-            >
-              {msg.role === 'assistant'
-                ? <ReactMarkdown>{msg.content}</ReactMarkdown>
-                : msg.content}
-            </div>
+            {msg.type === 'cover_letter' ? (
+              <CoverLetterMessage letter={msg.letterText} intitule={msg.content.split('\n')[0]} />
+            ) : (
+              <div
+                className="max-w-[85%] px-3 py-2 rounded-xl text-xs prose prose-xs"
+                style={msg.role === 'user'
+                  ? { background: C.sarcelle, color: 'white' }
+                  : { background: C.creme, color: C.ardoise }}
+              >
+                {msg.role === 'assistant'
+                  ? <ReactMarkdown>{msg.content}</ReactMarkdown>
+                  : msg.content}
+              </div>
+            )}
           </div>
         ))}
 
@@ -676,6 +754,7 @@ function JobSearch({ onNavigate }) {
   const [analyzingId, setAnalyzingId] = useState(null)
   const [showCvPreview, setShowCvPreview] = useState(false)
   const [error, setError] = useState(null)
+  const [generatedLetter, setGeneratedLetter] = useState(null)
 
   useEffect(() => {
     fetch('http://localhost:8000/jobs/regions')
@@ -786,6 +865,7 @@ function JobSearch({ onNavigate }) {
                   onAnalyze={() => handleAnalyze(offer.id)}
                   isAnalyzing={analyzingId === offer.id}
                   analysis={analyses[offer.id]}
+                  onLetterGenerated={(intitule, letter) => setGeneratedLetter({ intitule, letter })}
                 />
               )
             })}
@@ -796,6 +876,7 @@ function JobSearch({ onNavigate }) {
         <ChatColumn
           onNavigate={onNavigate}
           onSearch={(kw, typeContrat, experience) => { setKeywords(kw); runSearch(kw, region, typeContrat, experience) }}
+          generatedLetter={generatedLetter}
         />
       </div>
     </div>

@@ -283,9 +283,9 @@ def summarize_offer(description: str, model: str = "ollama/qwen2.5:7b") -> list[
             "role": "system",
             "content": (
                 "Tu es un expert en recrutement. Résume l'offre en exactement 3 points clés : "
-                "les missions principales, la stack technique, et le profil attendu. "
+                "les missions principales séparées par des points-virgules, la stack technique, et le profil attendu. "
                 "Réponds UNIQUEMENT avec un tableau JSON de 3 chaînes, sans texte ni markdown. "
-                "Exemple : [\"Mission A\", \"Stack B\", \"Profil C\"]"
+                "Exemple : [\"Mission A ; Mission B ; Mission C\", \"Stack demandée\", \"Profil recherché\"]"
             ),
         },
         {

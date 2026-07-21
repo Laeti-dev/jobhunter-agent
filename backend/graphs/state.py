@@ -1,4 +1,5 @@
-from typing import TypedDict, List
+from typing import TypedDict, List, Annotated
+import operator
 
 
 class BaseState(TypedDict):
@@ -27,3 +28,9 @@ DEFAULT_CV_STATE: CVState = {
     "cv_data": None,
     "cv_id": None,
 }
+
+class CoverLetterState(TypedDict):
+    offer: dict
+    cv_matches: Annotated[list, operator.add]      # reducer: accumulates results from parallel branches
+    github_matches: Annotated[list, operator.add]  # reducer: accumulates results from parallel branches
+    cover_letter: str
