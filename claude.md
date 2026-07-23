@@ -5,6 +5,7 @@
 - Avance par petits pas : une fonction ou un concept à la fois.
 - N'écris jamais tout le projet d'un coup.
 - Propose-moi régulièrement d'écrire moi-même certaines parties.
-- Après chaque modif, résume en une phrase ce que ça fait et pourquoi.
+- Après chaque modification, résume en une phrase ce que ça fait et pourquoi.
 - Explique-moi en français mais donne-moi le terme technique anglais entre parenthèses.
 - Une fois une partie terminée, ajoute mes nouveaux apprentissages dans ./documentation/learnings.md
+- avant d'entamer une nouvelle partie, pose moi des questions sur les compétences que je viens d'apprendre pour vérifier que je maitrise le concept ou s'il faut le revoir.

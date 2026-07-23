@@ -60,12 +60,16 @@ class CVRagIndex:
             self.client.delete_collection(COLLECTION_NAME)
         except Exception:
             pass
-        self._collection = self.client.create_collection(COLLECTION_NAME)
+        # hnsw:space="cosine" tells Chroma to compare vectors by angle, not raw distance —
+        # this must match normalize_embeddings=True below, otherwise the metric is inconsistent
+        self._collection = self.client.create_collection(
+            COLLECTION_NAME, metadata={"hnsw:space": "cosine"}
+        )
 
         texts = [c["text"] for c in chunks]
         ids = [c["id"] for c in chunks]
         metadatas = [{"section": c["section"]} for c in chunks]
-        embeddings = self.model.encode(texts).tolist()
+        embeddings = self.model.encode(texts, normalize_embeddings=True).tolist()
 
         self._collection.add(
             ids=ids,
@@ -79,7 +83,7 @@ class CVRagIndex:
         if self._collection is None:
             raise RuntimeError("CV not indexed yet — call index_cv first.")
 
-        query_embedding = self.model.encode([query_text]).tolist()
+        query_embedding = self.model.encode([query_text], normalize_embeddings=True).tolist()
         results = self._collection.query(
             query_embeddings=query_embedding,
             n_results=n_results,
@@ -107,9 +111,9 @@ class GitHubRepoIndex:
             self.client.delete_collection(GITHUB_COLLECTION_NAME)
         except Exception:
             pass
-        self._collection = self.client.create_collection(GITHUB_COLLECTION_NAME)
+        self._collection = self.client.create_collection(GITHUB_COLLECTION_NAME, metadata={"hnsw:space": "cosine"})
 
-        embeddings = self.model.encode(documents).tolist()
+        embeddings = self.model.encode(documents, normalize_embeddings=True).tolist()
         self._collection.add(
             ids=repo_names,
             embeddings=embeddings,
@@ -120,13 +124,13 @@ class GitHubRepoIndex:
     def retrieve(self, query_text: str, n_results: int = 3) -> list[dict]:
         """Find the most relevant GitHub repos for a given job offer query."""
         if self._collection is None:
-            self._collection = self.client.get_or_create_collection(GITHUB_COLLECTION_NAME)
+            self._collection = self.client.get_or_create_collection(GITHUB_COLLECTION_NAME, metadata={"hnsw:space": "cosine"})
 
         count = self._collection.count()
         if count == 0:
             return []
 
-        query_embedding = self.model.encode([query_text]).tolist()
+        query_embedding = self.model.encode([query_text], normalize_embeddings=True).tolist()
         results = self._collection.query(
             query_embeddings=query_embedding,
             n_results=min(n_results, count),
@@ -142,7 +146,7 @@ class GitHubRepoIndex:
     def list_repos(self) -> list[str]:
         """Return the names of all indexed repos."""
         if self._collection is None:
-            self._collection = self.client.get_or_create_collection(GITHUB_COLLECTION_NAME)
+            self._collection = self.client.get_or_create_collection(GITHUB_COLLECTION_NAME, metadata={"hnsw:space": "cosine"})
         results = self._collection.get()
         return [meta["repo"] for meta in results["metadatas"]]
 
@@ -155,6 +159,7 @@ def analyze_offer(
     offer: dict,
     retrieved_chunks: list[dict],
     model: str = "ollama/qwen2.5:7b",
+    api_key: str | None = None,
 ) -> str:
     """Generate a RAG-powered match analysis between a job offer and the retrieved CV sections."""
     context = "\n\n".join(
@@ -184,7 +189,7 @@ def analyze_offer(
         },
     ]
 
-    response = completion(model=model, messages=messages, temperature=0.3)
+    response = completion(model=model, messages=messages, temperature=0.3, api_key=api_key)
     return response.choices[0].message.content
 
 
@@ -192,6 +197,7 @@ def suggest_alternative_roles(
     cv: CVProfile,
     searched_role: str,
     model: str = "ollama/qwen2.5:7b",
+    api_key: str | None = None,
 ) -> list[str]:
     """Ask the LLM to suggest 3 job titles close to searched_role, based on the CV profile."""
     skills = ", ".join((cv.tech_skills or [])[:10]) or "non précisées"
@@ -217,7 +223,7 @@ def suggest_alternative_roles(
         },
     ]
 
-    response = completion(model=model, messages=messages, temperature=0.7)
+    response = completion(model=model, messages=messages, temperature=0.7, api_key=api_key)
     content = response.choices[0].message.content.strip()
     roles = json.loads(content)
     if not isinstance(roles, list):
@@ -228,6 +234,7 @@ def suggest_alternative_roles(
 def filter_technical_skills(
     skills: list[str],
     model: str = "ollama/qwen2.5:7b",
+    api_key: str | None = None,
 ) -> list[str]:
     """
     Send a list of raw competences to the LLM.
@@ -256,7 +263,7 @@ def filter_technical_skills(
         },
     ]
 
-    response = completion(model=model, messages=messages, temperature=0.1)
+    response = completion(model=model, messages=messages, temperature=0.1, api_key=api_key)
     content = response.choices[0].message.content.strip()
     try:
         filtered = json.loads(content)
@@ -276,7 +283,7 @@ def tag_matched_skills(offer: dict, cv_skills_lower: list[str]) -> list[str]:
     return [s for s in cv_skills_lower if s in offer_text][:6]
 
 
-def summarize_offer(description: str, model: str = "ollama/qwen2.5:7b") -> list[str]:
+def summarize_offer(description: str, model: str = "ollama/qwen2.5:7b", api_key: str | None = None) -> list[str]:
     """Ask the LLM to summarize an offer description in exactly 3 bullet points."""
     messages = [
         {
@@ -293,7 +300,7 @@ def summarize_offer(description: str, model: str = "ollama/qwen2.5:7b") -> list[
             "content": f"Résume cette offre en 3 points :\n\n{description[:3000]}",
         },
     ]
-    response = completion(model=model, messages=messages, temperature=0.3)
+    response = completion(model=model, messages=messages, temperature=0.3, api_key=api_key)
     content = response.choices[0].message.content.strip()
     try:
         bullets = json.loads(content)
@@ -304,7 +311,7 @@ def summarize_offer(description: str, model: str = "ollama/qwen2.5:7b") -> list[
     return [description[:300]]  # fallback: first 300 chars
 
 
-def enrich_offer_detail(offer_detail: dict, cv_skills: list[str]) -> dict:
+def enrich_offer_detail(offer_detail: dict, cv_skills: list[str], model: str = "ollama/qwen2.5:7b", api_key: str | None = None) -> dict:
     """
     Build enriched skill tags from a full offer detail (which includes 'competences').
     Returns matched_skills (green) and missing_skills (red) using the LLM-filtered tech stack.
@@ -316,7 +323,7 @@ def enrich_offer_detail(offer_detail: dict, cv_skills: list[str]) -> dict:
         for c in offer_detail.get("competences", [])
         if c.get("exigence") in ("E", "S")
     ]
-    tech_competences = filter_technical_skills(raw_competences)
+    tech_competences = filter_technical_skills(raw_competences, model=model, api_key=api_key)
     tech_set_lower = {s.lower() for s in tech_competences}
 
     offer_text = f"{offer_detail.get('intitule', '')} {offer_detail.get('description', '')}".lower()
@@ -343,12 +350,12 @@ def score_offers(offers: list[dict]) -> list[dict]:
         f"{offer.get('intitule', '')} {offer.get('description', '')[:1000]}"
         for offer in offers
     ]
-    offer_embeddings = _embedding_model.encode(offer_texts).tolist()
+    offer_embeddings = _embedding_model.encode(offer_texts, normalize_embeddings=True).tolist()
 
     if cv_rag._collection is None:
-        cv_rag._collection = cv_rag.client.get_or_create_collection(COLLECTION_NAME)
+        cv_rag._collection = cv_rag.client.get_or_create_collection(COLLECTION_NAME, metadata={"hnsw:space": "cosine"})
     if github_rag._collection is None:
-        github_rag._collection = github_rag.client.get_or_create_collection(GITHUB_COLLECTION_NAME)
+        github_rag._collection = github_rag.client.get_or_create_collection(GITHUB_COLLECTION_NAME, metadata={"hnsw:space": "cosine"})
 
     cv_results = cv_rag._collection.query(
         query_embeddings=offer_embeddings,

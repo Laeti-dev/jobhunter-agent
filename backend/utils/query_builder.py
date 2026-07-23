@@ -37,7 +37,7 @@ compétences techniques principales (ex: "AI Engineer Python LangGraph").
 """
 
 
-def build_query(cv_profile: CVProfile, model: str = "ollama/qwen2.5:7b") -> FranceTravailQuery:
+def build_query(cv_profile: CVProfile, model: str = "ollama/qwen2.5:7b", api_key: str | None = None) -> FranceTravailQuery:
     """Generate France Travail search parameters from a CVProfile using a structured LLM call."""
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -48,6 +48,7 @@ def build_query(cv_profile: CVProfile, model: str = "ollama/qwen2.5:7b") -> Fran
         messages=messages,
         response_format=_LLMQuery,
         temperature=0.1,
+        api_key=api_key,
     )
     llm_result = _LLMQuery.model_validate_json(response.choices[0].message.content)
     return FranceTravailQuery(**llm_result.model_dump())

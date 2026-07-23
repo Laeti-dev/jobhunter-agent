@@ -7,6 +7,7 @@ import markerIcon from 'leaflet/dist/images/marker-icon.png'
 import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png'
 import markerShadow from 'leaflet/dist/images/marker-shadow.png'
 import CVPreview from './CVPreview'
+import { apiFetch } from '../api'
 
 delete L.Icon.Default.prototype._getIconUrl
 L.Icon.Default.mergeOptions({ iconUrl: markerIcon, iconRetinaUrl: markerIcon2x, shadowUrl: markerShadow })
@@ -100,7 +101,7 @@ function TopBar({ keywords, setKeywords, region, setRegion, regions, isSearching
 }
 
 // ── Offer card ────────────────────────────────────────────────
-function OfferCard({ offer, ratio, onAnalyze, isAnalyzing, analysis, onLetterGenerated }) {
+function OfferCard({ offer, onAnalyze, isAnalyzing, analysis, onLetterGenerated }) {
   const [showLocation, setShowLocation] = useState(false)
   const [showDetail, setShowDetail] = useState(false)
   const [detail, setDetail] = useState(null)
@@ -112,7 +113,7 @@ function OfferCard({ offer, ratio, onAnalyze, isAnalyzing, analysis, onLetterGen
     try {
       let summary = detail?.summary
       if (!summary) {
-        const enrichRes = await fetch(`http://localhost:8000/jobs/${offer.id}/enrich`)
+        const enrichRes = await apiFetch(`/jobs/${offer.id}/enrich`)
         const enrichData = await enrichRes.json()
         setDetail(enrichData)
         summary = enrichData.summary
@@ -138,7 +139,7 @@ function OfferCard({ offer, ratio, onAnalyze, isAnalyzing, analysis, onLetterGen
     if (detail) return  // already fetched
     setLoadingDetail(true)
     try {
-      const res = await fetch(`http://localhost:8000/jobs/${offer.id}/enrich`)
+      const res = await apiFetch(`/jobs/${offer.id}/enrich`)
       const data = await res.json()
       setDetail(data)
     } catch {
@@ -148,7 +149,7 @@ function OfferCard({ offer, ratio, onAnalyze, isAnalyzing, analysis, onLetterGen
     }
   }
 
-  const pct      = Math.round(ratio * 100)
+  const pct      = Math.round((offer.score ?? 0) * 100)
   // These fields come directly from the search results — always available
   const location = offer.lieuTravail?.libelle
   const contract = offer.typeContratLibelle ?? offer.typeContrat
@@ -270,6 +271,17 @@ function OfferCard({ offer, ratio, onAnalyze, isAnalyzing, analysis, onLetterGen
                     {detail.description}
                   </p>
                 </details>
+              )}
+              {detail.apply_url && (
+                <a
+                  href={detail.apply_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-block text-xs font-medium underline"
+                  style={{ color: C.sarcelle }}
+                >
+                  Postuler à cette offre ↗
+                </a>
               )}
             </>
           ) : null}
@@ -472,7 +484,7 @@ function ChatColumn({ onNavigate, onSearch, generatedLetter }) {
       { role: 'user', content: 'Je cherche un autre poste' },
     ])
     try {
-      const res = await fetch(`http://localhost:8000/jobs/suggest-roles?role=${encodeURIComponent(suggestedRole)}`)
+      const res = await apiFetch(`/jobs/suggest-roles?role=${encodeURIComponent(suggestedRole)}`)
       const data = await res.json()
       setAlternativeRoles(data.roles ?? [])
       setMessages((prev) => [
@@ -805,7 +817,7 @@ function JobSearch({ onNavigate }) {
     if (analyses[offerId]) return
     setAnalyzingId(offerId)
     try {
-      const res = await fetch('http://localhost:8000/jobs/analyze', {
+      const res = await apiFetch('/jobs/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ offer_id: offerId }),
@@ -818,8 +830,6 @@ function JobSearch({ onNavigate }) {
       setAnalyzingId(null)
     }
   }
-
-  const maxScore = offers.length > 0 ? Math.max(...offers.map((o) => o.score ?? 0)) : 1
 
   return (
     <div className="flex flex-col h-full" style={{ background: C.creme }}>
@@ -856,12 +866,10 @@ function JobSearch({ onNavigate }) {
           )}
           <div className="space-y-4 max-w-2xl mx-auto">
             {offers.map((offer) => {
-              const ratio = maxScore > 0 ? (offer.score ?? 0) / maxScore : 0
               return (
                 <OfferCard
                   key={offer.id}
                   offer={offer}
-                  ratio={ratio}
                   onAnalyze={() => handleAnalyze(offer.id)}
                   isAnalyzing={analyzingId === offer.id}
                   analysis={analyses[offer.id]}

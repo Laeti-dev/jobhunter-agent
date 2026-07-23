@@ -1039,3 +1039,178 @@ builder.add_conditional_edges(START, dispatch, ["node_a", "node_b"])
 ```
 
 The third argument (`["node_a", "node_b"]`) is the list of possible target nodes — LangGraph uses it to validate the graph at compile time.
+
+---
+
+## Phase 4b — Debugging embedding match quality
+
+### Cosine similarity vs L2 distance — the metric must match the model's training objective
+
+Two ways to compare two embedding vectors:
+
+- **L2 (Euclidean) distance** — "how far apart are these two points?" Sensitive to both the *direction* of the vectors (the meaning) and their *length* (the norm) — a pure artefact, not signal.
+- **Cosine similarity** — "what's the angle between these two vectors?" Ignores length entirely, keeps only direction.
+
+`paraphrase-multilingual-MiniLM-L12-v2` (like most `sentence-transformers` models) is trained with a cosine-similarity objective. Using it and then comparing vectors with a distance function it wasn't optimized for (Chroma's default is L2) reintroduces noise unrelated to actual semantic closeness — a subtle bug that produces "roughly OK but not reliable" retrieval results, exactly the kind of thing that's hard to notice without measuring it directly.
+
+**Fix — two changes that must be made together:**
+
+```python
+# 1. Normalize embeddings so only direction remains (length forced to 1)
+embeddings = model.encode(texts, normalize_embeddings=True)
+
+# 2. Tell Chroma to compare by angle (cosine), not raw L2 distance
+collection = client.create_collection(name, metadata={"hnsw:space": "cosine"})
+```
+
+Doing only one of the two still leaves an inconsistent metric.
+
+### `metadata={"hnsw:space": ...}` only applies at creation time
+
+`get_or_create_collection(name, metadata=...)` silently **ignores** the `metadata` argument if the collection already exists — it only takes effect the first time the collection is created. This means changing the distance metric in code has **no effect on existing data** until the collection is deleted and rebuilt. Since `index_cv()` and `index_repos()` already do `delete_collection` + `create_collection` on every call, simply re-indexing the CV and the GitHub repos after the code change was enough to apply the fix — no manual DB reset needed.
+
+### Diagnosing retrieval quality by asking Chroma for raw distances
+
+`collection.query(...)` normally used through `retrieve()` only returns document text — the actual distance numbers behind a match are hidden. Passing `include=["distances", "metadatas", "documents"]` exposes them directly, which is the fastest way to *see* whether retrieval is behaving as expected instead of guessing from the final LLM output:
+
+```python
+results = collection.query(
+    query_embeddings=query_embedding,
+    n_results=collection.count(),
+    include=["distances", "metadatas", "documents"],
+)
+for dist, meta, doc in zip(results["distances"][0], results["metadatas"][0], results["documents"][0]):
+    similarity = 1 - dist   # with cosine space, distance = 1 - cosine_similarity
+    print(f"[{meta['section']}] similarity={similarity:.4f}  {doc[:100]}")
+```
+
+A small standalone script (`backend/check_matching.py`, not part of the app) doing exactly this against a real, suspicious offer confirmed the fix worked: the CV's Algocat experience chunk (SDK Python, APIs REST, LLMs in production) scored ~0.71 cosine similarity against an "AI Software Engineer / FastAPI / Claude / RAG" offer — high because the tech vocabulary genuinely overlaps, not because of a bug.
+
+### Embeddings capture semantic topic, not hard/structured constraints
+
+An offer requiring "at least 4 years of Software Engineering experience" scored a high match even though that requirement wasn't clearly met. This is not a retrieval bug — **embeddings encode what a text is about, not verifiable facts about it**. Whether an offer says "4 years" or "10 years" barely moves the embedding, because "years of experience required" isn't the kind of information a semantic vector represents well.
+
+This is exactly why the codebase already has a *separate*, non-embedding mechanism for skill matching (`tag_matched_skills`, `enrich_offer_detail` in `rag.py`) — extracting explicit facts and comparing them directly, rather than relying on similarity. The same pattern (extract a structured fact from the offer text, compare it deterministically to the candidate's data) would be needed for "years of experience required" — noted as a follow-up, not yet implemented.
+
+**General lesson**: a RAG/embedding pipeline answers "is this semantically related?" — it does not answer "does this candidate qualify?" Hard, numeric, or categorical constraints need explicit extraction + rule-based comparison alongside the semantic score, not instead of it.
+
+### Relative-to-batch percentage vs absolute score — a misleading UX pattern
+
+The job search UI displayed a match percentage computed as:
+
+```js
+const maxScore = Math.max(...offers.map((o) => o.score ?? 0))
+const ratio = offer.score / maxScore   // relative to the best offer in *this* batch
+```
+
+This means the top-ranked offer in *any* search always displays 100%, regardless of whether it's actually a strong match (0.9) or a mediocre one (0.5) — the percentage measures rank within the current results, not fit quality, but is presented visually as if it were absolute. This is what produced a "100% match" badge on an offer that didn't actually meet a stated requirement.
+
+**Fix**: display `offer.score` directly (already bounded in a fixed, offer-independent range by the `1 / (1 + distance)` formula) instead of dividing by the batch's max. Trade-off: because that formula never reaches exactly 0% (a maximally dissimilar cosine distance of 2 still yields `1/(1+2) ≈ 33%`), percentages now sit in a narrower, lower band than before — a less flattering but more honest number.
+
+## Phase 5 — BYOK: letting each user pick their own LLM model and API key
+
+Goal: before deploying to production, let each user choose their LLM provider/model and supply their own API key ("Bring Your Own Key"), instead of the app always calling a hardcoded local Ollama model.
+
+### Function parameters don't propagate automatically through a call chain
+
+Adding `api_key: str | None = None` to `filter_technical_skills()` changes nothing about how `enrich_offer_detail()` behaves, because it called `filter_technical_skills(raw_competences)` — no `api_key` passed, so the default (`None`) is used regardless of what the outer caller received.
+
+```python
+def enrich_offer_detail(offer_detail, cv_skills, model=..., api_key=None):
+    tech_competences = filter_technical_skills(raw_competences)  # api_key silently dropped here
+```
+
+**General lesson**: in Python, each function call is independent — there is no implicit mechanism for a parameter to "flow through" a call chain. A value has to be explicitly re-passed at *every* level between where it enters (the outermost caller) and where it's actually used (the innermost `completion()` call). Missing one link in the chain means that link silently falls back to its default — here, silently switching back to Ollama even though the user supplied a paid API key elsewhere.
+
+### `litellm.completion(api_key=None)` is a safe no-op
+
+Passing `api_key=None` explicitly to `litellm.completion()` behaves exactly as if `api_key` were never mentioned — litellm falls back to its normal resolution (environment variable, or nothing for a local Ollama model, which doesn't need a key at all). This is what makes the BYOK parameter backward-compatible: existing calls that don't supply a key keep working unchanged.
+
+### `Annotated` reducers only matter for concurrent *writes*, not reads
+
+Earlier (Phase 4a) we used `Annotated[list, operator.add]` so that two parallel LangGraph branches (dispatched via `Send`) wouldn't overwrite each other's output in the shared state. It's tempting to assume *any* field read by parallel branches needs the same treatment — but that's not the rule.
+
+The reducer only matters for a state key that multiple concurrent branches **write to**. A key like `model`/`api_key`, set once before the fan-out and only **read** (never reassigned) by the parallel nodes, needs no reducer at all — a plain field in the `TypedDict` is enough, because there's no concurrent write to merge.
+
+### Two very different kinds of "concurrency" in this app
+
+"What happens when multiple users hit the app at the same time?" has two unrelated answers depending on where the state lives:
+
+- **Per-request values** (function parameters, a LangGraph state field like `model`/`api_key`) are safe by construction: each HTTP request runs its own call stack with its own local variables, so two concurrent requests never see each other's `model`/`api_key`.
+- **Module-level singletons** are not: `cv_rag = CVRagIndex()` and `github_rag = GitHubRepoIndex()` in `rag.py` are single instances shared by *every* request, pointing at a single, un-scoped ChromaDB collection name (`"cv_index"`). Likewise, `get_latest_cv()` in `database.py` does `ORDER BY id DESC LIMIT 1` with no `user_id` filter. Two users using the app at the same time can end up matched against each other's CV — a real bug, unrelated to the BYOK work, and a prerequisite to fix before a genuinely multi-user production deployment (would need per-user scoping: collection names, DB rows, etc.).
+
+### MCP solves a different problem than BYOK
+
+MCP (Model Context Protocol) standardizes how an LLM-driven **host** application (e.g. Claude Desktop, Claude Code) discovers and calls external **tools**/**resources**. It says nothing about which model the host itself uses, or which API key pays for that host's own completions — that's always decided by the host, outside MCP's scope.
+
+BYOK is the opposite direction: *our own backend* is the one calling `completion()`, and we want *our own users* to supply the model/key for *that* call. MCP wouldn't replace anything here. It would become relevant in a different scenario: exposing this app's own capabilities (search offers, analyze a CV...) as MCP tools so an external host (e.g. Claude Code) could drive them — a possible future direction, not a solution to today's problem.
+
+### FastAPI: headers + `Depends` for a cross-cutting concern that spans GET and POST
+
+Some endpoints needing the LLM config are `GET` with just a query string (`/jobs/suggest-roles?role=...`), so there's no JSON body to add `model`/`api_key` fields to. HTTP headers work for both `GET` and `POST` alike, and a single shared FastAPI dependency avoids repeating "read these two headers" in every route:
+
+```python
+from dataclasses import dataclass
+from fastapi import Header
+
+@dataclass
+class LLMConfig:
+    model: str
+    api_key: str | None
+
+def get_llm_config(
+    x_llm_model: str = Header(default="ollama/qwen2.5:7b"),
+    x_llm_api_key: str | None = Header(default=None),
+) -> LLMConfig:
+    return LLMConfig(model=x_llm_model, api_key=x_llm_api_key)
+
+@router.get("/suggest-roles")
+def suggest_roles(role: str, llm: LLMConfig = Depends(get_llm_config)):
+    ...
+```
+
+Detail worth remembering: FastAPI maps the parameter name `x_llm_model` to the HTTP header `X-Llm-Model` automatically — underscores become hyphens, matching standard HTTP header naming convention. The frontend has to send the hyphenated header name.
+
+### Frontend: centralize a cross-cutting fetch concern the same way
+
+The app had ~20 scattered `fetch('http://localhost:8000/...')` calls with no shared client. Rather than adding the two headers by hand at every call site (the same class of mistake as the `enrich_offer_detail` propagation gap above, just in JS), a small wrapper centralizes it once:
+
+```js
+// api.js
+export function apiFetch(path, options = {}) {
+  const { model, apiKey } = getLlmConfig()
+  const headers = { ...options.headers, 'X-Llm-Model': model }
+  if (apiKey) headers['X-Llm-Api-Key'] = apiKey
+  return fetch(`${BASE_URL}${path}`, { ...options, headers })
+}
+```
+
+Spreading `...options.headers` *before* adding the LLM headers means a caller's own headers (e.g. `Content-Type` for a JSON POST) are preserved, not overwritten.
+
+### Testing "does the config propagate" is a plumbing test, not a quality test
+
+This codebase already had two kinds of LLM-related tests: fast ones (`TestClient` + `unittest.mock.patch`, no network) and slow ones (`@pytest.mark.deepeval`, real Ollama calls judged for answer quality). Verifying that a header reaches the right function with the right value is neither — it's a **plumbing** test: does the value flow correctly through `Depends` → route → business function? Mocking the business function and asserting on its call arguments answers that in milliseconds, with no LLM involved:
+
+```python
+def test_suggest_roles_forwards_llm_config(sample_profile):
+    with patch("routers.job_offers.get_latest_cv", return_value=sample_profile), \
+         patch("routers.job_offers.suggest_alternative_roles", return_value=["A", "B", "C"]) as mock_suggest:
+        response = client.get(
+            "/jobs/suggest-roles?role=Data Scientist",
+            headers={"X-Llm-Model": "anthropic/claude-haiku-4-5", "X-Llm-Api-Key": "sk-test-123"},
+        )
+    mock_suggest.assert_called_once_with(
+        sample_profile, searched_role="Data Scientist",
+        model="anthropic/claude-haiku-4-5", api_key="sk-test-123",
+    )
+```
+
+Pairing each "custom header" test with a "no header → falls back to the Ollama default" test caught the exact kind of silent-fallback bug described above, without needing a real model call either way.
+
+### Still open after this phase
+
+- The Settings UI itself (the frontend still always sends the Ollama default — nothing yet lets a user actually type in their own model/key).
+- `/chat` (`main.py`) and `/cover/generate` (`cover.py`) also call an LLM but aren't wired to `get_llm_config` yet.
+- The multi-user singleton/isolation issue above (`cv_rag`, `github_rag`, `get_latest_cv`) — a separate, more invasive piece of work.
+
+**General lesson**: any time a displayed metric is computed relative to the current result set (`x / max(all x)`), consider whether the audience will read it as absolute. A relative ranking dressed up as a percentage is a classic way to accidentally overstate quality.

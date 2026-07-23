@@ -1,5 +1,6 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
+from dependencies import get_llm_config, LLMConfig
 from utils.database import get_latest_cv
 from utils.france_travail import france_travail
 from utils.rag import cv_rag, analyze_offer, score_offers, suggest_alternative_roles, summarize_offer, enrich_offer_detail
@@ -58,20 +59,20 @@ def search_offers(query: SearchRequest):
 
 
 @router.get("/suggest-roles")
-def suggest_roles(role: str):
+def suggest_roles(role: str, llm: LLMConfig = Depends(get_llm_config)):
     """Ask the LLM to suggest 3 job titles close to `role`, based on the stored CV."""
     cv = get_latest_cv()
     if cv is None:
         raise HTTPException(status_code=404, detail="Aucun CV trouvé.")
     try:
-        roles = suggest_alternative_roles(cv, searched_role=role)
+        roles = suggest_alternative_roles(cv, searched_role=role, model=llm.model, api_key=llm.api_key)
         return {"roles": roles}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/{offer_id}/enrich")
-def enrich_offer(offer_id: str):
+def enrich_offer(offer_id: str, llm: LLMConfig = Depends(get_llm_config)):
     """
     Fetch full offer detail, then return:
     - a 3-bullet LLM summary
@@ -85,14 +86,21 @@ def enrich_offer(offer_id: str):
     offer_detail = france_travail.get_offer(offer_id)
     description = offer_detail.get("description", "")
 
-    summary = summarize_offer(description)
-    skill_tags = enrich_offer_detail(offer_detail, cv_skills)
+    summary = summarize_offer(description, model=llm.model, api_key=llm.api_key)
+    skill_tags = enrich_offer_detail(offer_detail, cv_skills, model=llm.model, api_key=llm.api_key)
+    # Prefer the recruiter's own application link (contact.urlPostulation); fall back
+    # to the France Travail offer page, which every offer has.
+    apply_url = (
+        offer_detail.get("contact", {}).get("urlPostulation")
+        or offer_detail.get("origineOffre", {}).get("urlOrigine")
+    )
 
     return {
         "summary": summary,
         "matched_skills": skill_tags["matched_skills"],
         "missing_skills": skill_tags["missing_skills"],
         "description": description,
+        "apply_url": apply_url,
     }
 
 
@@ -111,7 +119,7 @@ def score_job_offers(request: ScoreRequest):
 
 
 @router.post("/analyze")
-def analyze(request: AnalyzeRequest):
+def analyze(request: AnalyzeRequest, llm: LLMConfig = Depends(get_llm_config)):
     """Analyze the match between the stored CV and a job offer using RAG."""
     cv = get_latest_cv()
     if cv is None:
@@ -123,5 +131,5 @@ def analyze(request: AnalyzeRequest):
         f"{offer.get('intitule', '')} {offer.get('description', '')[:500]}",
         n_results=3,
     )
-    analysis = analyze_offer(offer, chunks)
+    analysis = analyze_offer(offer, chunks, model=llm.model, api_key=llm.api_key)
     return {"analysis": analysis, "matched_sections": chunks}
